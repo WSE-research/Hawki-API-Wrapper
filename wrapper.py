@@ -16,6 +16,7 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 import sys
+from HawkiLLM import Hawki2ChatModel
 
 
 ALLOWED_KEYS = json.loads(config('ALLOWED_KEYS'))
@@ -29,6 +30,7 @@ completion_cache = LRUCache(capacity=LRU_CACHE_CAPACITY)
 
 HTTP_SERVER = AsyncClient()
 
+hawki = Hawki2ChatModel()
 
 @app.get("/")
 async def root():
@@ -47,43 +49,6 @@ async def root():
         "documentation": "/docs",
         "status": "operational"
     }
-
-
-@app.post("/v1/moderations")
-async def moderations(request: Request):
-    """
-    Moderate content using the OpenAI API
-    define a route for the wrapper: /v1/moderations, cf. https://platform.openai.com/docs/guides/moderation 
-    input: a string or a list of strings
-    model: a string, default is "omni-moderation-latest"
-    output: a list of moderation results
-    """
-
-    # get the request body
-    body = await request.json()
-
-    # check for input and model
-    try:
-        input_data = body.get("input")
-    except Exception as e:
-        logger.error(f"Error getting input or model: {e}")
-        return fastapi_responses.JSONResponse(
-            status_code=400,
-            content={"error": "Missing input or model"}
-        )
-
-    model = body.get("model", "omni-moderation-latest")
-
-    response = moderate_content(input_data, model)
-
-    return fastapi_responses.JSONResponse(
-        content=response.model_dump_json()
-    )
-
-
-def moderate_content(input_data, model="omni-moderation-latest"):
-    None; # Not needed 
-
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
