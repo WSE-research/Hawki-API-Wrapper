@@ -1,0 +1,11 @@
+{
+    "services": [{
+        "mode": "dockerfile",
+        "port": "40177:8000",
+        "image": "wseresearch/openai-api-wrapper-with-moderation",
+        "tag": "latest",
+        "files": {
+            ".env": "env"
+        }
+    }]
+}

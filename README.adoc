@@ -1,0 +1,76 @@
+:toc:
+:toclevels: 5
+:toc-placement!:
+:source-highlighter: highlight.js
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+:github-repository: https://github.com/WSE-research/OpenAI-API-wrapper-with-moderation
+endif::[]
+
+= OpenAI API wrapper with moderation
+
+This is a simple web service that hands over requests to the OpenAI API but checks the messages first via the moderation endpoint.
+Additionally, it will decouple the actual OpenAI API keys, s.t., they don't need to be shared with the clients.
+
+---
+
+toc::[]
+
+---
+
+== Building and Running the Application
+
+=== Running locally with Python 3.10+
+
+==== Install dependencies
+
+===== Install Python dependencies
+
+[source, bash]
+----
+pip install -r requirements.txt
+----
+
+Note: If you are using a virtual environment, make sure to activate it before running the command.
+
+==== Run the Application
+
+[source, bash]
+----
+python wrapper.py
+----
+
+After that, you can access the application at http://localhost:8501.
+
+=== Docker
+
+==== Build the Docker image
+
+[source, bash]
+----
+docker build -t openai-api-wrapper-with-moderation:latest .
+----
+
+==== Run the Docker container
+
+[source, bash]
+----
+docker run -p 8000:8000  --name openai-api-wrapper-with-moderation  --env-file=service_config/files/env openai-api-wrapper-with-moderation:latest 
+----
+
+Now, you can access the application at http://localhost:8000.
+
+== Contribute
+
+We are happy to receive your contributions. 
+Please create a pull request or an {github-repository}/issues/new[issue].
+As this tool is published under the {github-repository}/blob/main/LICENSE[MIT license], feel free to {github-repository}/fork[fork] it and use it in your own projects.
+
+== Disclaimer
+
+This tool just temporarily stores the image data. 
+This tool is provided "as is" and without any warranty, express or implied.
