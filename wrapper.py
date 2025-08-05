@@ -17,10 +17,15 @@ from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 import sys
 from HawkiLLM import Hawki2ChatModel
+from dotenv import load_dotenv
 
 
-ALLOWED_KEYS = json.loads(config('ALLOWED_KEYS'))
-OPENAI_DEFAULT_API_KEY = config('OPENAI_DEFAULT_API_KEY')
+from decouple import Config, Csv
+
+load_dotenv('./service_config/files/.env')
+
+ALLOWED_KEYS = json.loads(config('ALLOWED_KEYS', default='{}')) # TODO: Add our API-keys.
+OPENAI_DEFAULT_API_KEY = json.loads(config('OPENAI_DEFAULT_API_KEY', default='{}'))
 PORT = config('PORT', default=8000)
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 
@@ -29,8 +34,6 @@ app = FastAPI()
 completion_cache = LRUCache(capacity=LRU_CACHE_CAPACITY)
 
 HTTP_SERVER = AsyncClient()
-
-hawki = Hawki2ChatModel()
 
 @app.get("/")
 async def root():
@@ -289,22 +292,22 @@ async def list_models(request: Request):
         )
 
     # set the new API key
-    openai_api_key = ALLOWED_KEYS[api_key]
+    hawki_api_key = ALLOWED_KEYS[api_key]
 
     # create a client for the OpenAI API
-    client = openai.OpenAI(api_key=openai_api_key)
+    client = Hawki2ChatModel(api_key=hawki_api_key)
 
     try:
         # Forward the request to OpenAI API using the client
-        response = client.models.list()
+        model_list = client.models.list()
 
         # models: pretty print the JSON response
         logger.info(
-            f"Models: {json.dumps(json.loads(response.model_dump_json()), indent=4)}")
+            f"Models: {json.dumps(model_list, indent=4)}")
 
         # Return the models data
         return fastapi_responses.JSONResponse(
-            content=json.loads(response.model_dump_json()),
+            content=model_list,
             status_code=200
         )
 

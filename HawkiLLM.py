@@ -11,6 +11,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult, ChatGeneration
+from pydantic import BaseModel, Field
+import json
+from decouple import config
 from dotenv import load_dotenv
 from tenacity import (
     retry,
@@ -22,7 +25,8 @@ from requests.exceptions import HTTPError, Timeout
 
 OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
 
-load_dotenv()
+load_dotenv("./service_config/files/.env")  # Load environment variables from .env file
+AVAILABLE_MODELS = (config('MODELS', default='{}')).split(',')
 logger = logging.getLogger(__name__)
 
 supported_models = [
@@ -101,21 +105,45 @@ class RateLimitedOpenAI(ChatOpenAI):
 
             raise
 
-class Hawki2ChatModel(BaseChatModel):
+class Models:
+    """
+    Collection of available models with their configurations.
+    """
+
+    models: List[str] = []
+
+    def __init__(self):
+        # Load from JSON
+        self.models = AVAILABLE_MODELS
+
+    def list(self) -> List[str]:
+        """
+        List all available models.
+        """
+        return list(self.models)
+
+class Hawki2ChatModel(BaseChatModel, BaseModel):
     """
     Custom Hawki2 API client with comprehensive timeout and rate limiting protection.
     """
-    model: str = "gpt-4o" # TODO: Set default model
-    api_url: str = "https://hawki2.htwk-leipzig.de/api/ai-req"
-    api_key: str = "14|mhc2pVRPVfqP2PBc2ID2RV1P6QsPR2f3r6Wy9vGDc8026a96"
+    model: str = Field(default="gpt-4o")
+    api_url: str = Field(default="https://hawki2.htwk-leipzig.de/api/ai-req")
+    api_key: str
+    models: Models = Field(default_factory=Models)
     
-    primary_failures: int = 0
-    primary_next_available: float = 0
-    secondary_failures: int = 0
-    secondary_next_available: float = 0
+    primary_failures: int = Field(default=0)
+    primary_next_available: float = Field(default=0)
+    secondary_failures: int = Field(default=0)
+    secondary_next_available: float = Field(default=0)
     
-    last_used_primary: bool = False
-    request_count: int = 0
+    last_used_primary: bool = Field(default=False)
+    request_count: int = Field(default=0)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self, api_key: str, **kwargs):
+        super().__init__(api_key=api_key, **kwargs)
 
     @property
     def _llm_type(self) -> str:
@@ -353,4 +381,3 @@ class Hawki2ChatModel(BaseChatModel):
             return True
         else:
             raise ValueError(f"Model {model} is not supported by Hawki2. Supported models: {supported_models}")
-        

@@ -4,27 +4,27 @@
 
 cp ./service_config/files/env.template ./service_config/files/env
 
-# test if the environment variables are set and not empty
-if [ -z "$INJECTED_OPENAI_DEFAULT_API_KEY" ]
-then
-    echo "INJECTED_OPENAI_DEFAULT_API_KEY is not set. Exiting."
-    exit 2
-else
-    sed -i "s/INJECTED_OPENAI_DEFAULT_API_KEY/${INJECTED_OPENAI_DEFAULT_API_KEY}/g" ./service_config/files/env
-
-    if [ `grep -c "INJECTED_OPENAI_DEFAULT_API_KEY" ./service_config/files/env` -ne 0 ]
-    then
-        echo "INJECTED_OPENAI_DEFAULT_API_KEY was not successfully replaced. Exiting."
-        exit 2
-    fi
-fi
-
 if [ -z "$INJECTED_ALLOWED_KEYS" ]
 then
     echo "INJECTED_ALLOWED_KEYS is not set. Exiting."
     exit 3
 else
-    sed -i "s/INJECTED_ALLOWED_KEYS/${INJECTED_ALLOWED_KEYS}/g" ./service_config/files/env
+    # Set required environment variables for create_key_mappings.sh
+    export INTERNAL_KEY="$INTERNAL_KEY"
+    export EXTERNAL_KEYS="$EXTERNAL_KEYS"
+    
+    # Generate and capture key mappings
+    KEY_MAPPINGS=$(./service_config/create_key_mappings.sh)
+    if [ $? -ne 0 ]; then
+        echo "Failed to generate key mappings"
+        exit 3
+    fi
+    
+    # Escape special characters for sed
+    ESCAPED_MAPPINGS=$(printf '%s\n' "$KEY_MAPPINGS" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
+    
+    # Replace in env file
+    sed -i "s/INJECTED_ALLOWED_KEYS/${ESCAPED_MAPPINGS}/g" ./service_config/files/env
 
     if [ `grep -c "INJECTED_ALLOWED_KEYS" ./service_config/files/env` -ne 0 ]
     then
