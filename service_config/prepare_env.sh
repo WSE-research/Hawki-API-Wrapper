@@ -7,7 +7,9 @@ cp ./service_config/files/env.template ./service_config/files/env
 # Set required environment variables for create_key_mappings.sh
 export INTERNAL_KEY="$INTERNAL_KEY"
 export EXTERNAL_KEYS="$EXTERNAL_KEYS"
-    
+
+chmod +x ./service_config/create_key_mappings.sh
+
 ## Generate and capture key mappings
 KEY_MAPPINGS=$(./service_config/create_key_mappings.sh)
 if [ $? -ne 0 ]; then
