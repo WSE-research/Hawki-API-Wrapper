@@ -85,29 +85,6 @@ async def chat_completions(request: Request):
     # create a key from all the request details, and the current week number and year
     cache_key = f"{datetime.now().year}-{datetime.now().isocalendar()[1]}-{json.dumps(body, sort_keys=True)}"
 
-    # Check content moderation for all messages
-    for message in messages:
-        if 'content' in message:
-            moderation = moderate_content(message['content'])
-            logger.info(f"Moderation: {moderation}")
-            if moderation.results[0].flagged:
-                logger.warning(
-                    f"Moderation: content was flagged: content: {message['content']} -- result: {moderation.results[0]}")
-
-                # make a JSON object with the moderation results
-                moderation_json = json.loads(moderation.model_dump_json())
-                logger.warning(f"Moderation JSON: {moderation_json}")
-
-                try:
-                    return fastapi_responses.JSONResponse(
-                        status_code=451,
-                        content={"error": "Content violates content policy",
-                                 "details": moderation_json}
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Error: {e}, moderation: {moderation.results[0]}")
-
     # if the API key is not allowed, return a 401 error
     if api_key not in ALLOWED_KEYS:
         logger.warning(f"Unauthorized API key: {api_key}")
@@ -177,8 +154,10 @@ async def chat_completions(request: Request):
     #     background=BackgroundTask(rp_resp.aclose),
     # )
 
-    # create a client for the OpenAI API
-    client = openai.OpenAI(api_key=openai_api_key)
+    # create a client for Hawki # TODO: Check re-use instead of creating a new instance; e.g. by replacing the API key for each request
+    client = Hawki2ChatModel(api_key=api_key)
+
+    # TODO: Continue here
 
     response = client.chat.completions.create(
         model=model,

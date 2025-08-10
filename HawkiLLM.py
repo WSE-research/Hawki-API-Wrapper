@@ -26,7 +26,6 @@ from requests.exceptions import HTTPError, Timeout
 OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
 
 load_dotenv("./service_config/files/.env")  # Load environment variables from .env file
-AVAILABLE_MODELS = (config('MODELS', default='{}')).split(',')
 logger = logging.getLogger(__name__)
 
 supported_models = [
@@ -110,11 +109,11 @@ class Models:
     Collection of available models with their configurations.
     """
 
-    models: List[str] = []
+    models: List[str]
 
     def __init__(self):
         # Load from JSON
-        self.models = AVAILABLE_MODELS
+        self.models = supported_models
 
     def list(self) -> List[str]:
         """
