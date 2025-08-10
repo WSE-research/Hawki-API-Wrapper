@@ -8,7 +8,6 @@ jobs:
     env:
       INTERNAL_KEY: ${{ secrets.INTERNAL_KEY }}
       EXTERNAL_KEYS: ${{ secrets.EXTERNAL_KEYS }}
-      INJECTED_ALLOWED_KEYS: ${{ secrets.INJECTED_ALLOWED_KEYS }}
       INJECTED_PORT: ${{ secrets.INJECTED_PORT }}
     steps:
     - uses: actions/checkout@v4

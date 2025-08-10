@@ -25,7 +25,6 @@ from decouple import Config, Csv
 load_dotenv('./service_config/files/.env')
 
 ALLOWED_KEYS = json.loads(config('ALLOWED_KEYS', default='{}')) # TODO: Add our API-keys.
-OPENAI_DEFAULT_API_KEY = json.loads(config('OPENAI_DEFAULT_API_KEY', default='{}'))
 PORT = config('PORT', default=8000)
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 
