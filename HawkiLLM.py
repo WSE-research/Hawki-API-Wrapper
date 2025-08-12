@@ -129,12 +129,12 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048 # TODO: What's the usual max_tokens?
     top_p: float = 1.0 # TODO: Can this be used here? Otherwise, throw away
-    base_backoff: float = Field(default=config("HAWKI2_BASE_BACKOFF"))
-    connect_timeout: int = Field(default=config("HAWKI2_CONNECT_TIMEOUT"))
-    read_timeout: int = Field(default=config("HAWKI2_READ_TIMEOUT"))
-    global_timeout: int = Field(default=config("HAWKI2_GLOBAL_TIMEOUT"))
-    max_cooldown: int = Field(default=config("HAWKI2_MAX_COOLDOWN"))
-    api_url: str = Field(default="https://hawki2.htwk-leipzig.de/api/ai-req")
+    base_backoff: float = 10.0
+    connect_timeout: int = 360
+    read_timeout: int = 360
+    global_timeout: int = 360
+    max_cooldown: int = 360
+    api_url: str = Field(default=config("HAWKI_API_URL"))
     api_key: str = Field(default=config("PRIMARY_API_KEY"))
     secondary_api_key: str = Field(default=config("SECONDARY_API_KEY"))
     models: Models = Field(default_factory=Models)
