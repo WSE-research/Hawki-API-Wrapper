@@ -79,8 +79,7 @@ async def chat_completions(request: Request):
     temperature = body.get("temperature", None)
     max_tokens = body.get("max_tokens", None)
     top_p = body.get("top_p", None)
-    # TODO: Stream
-    stream = body.get("stream", False)
+    stream : bool = body.get("stream", False)
 
     # Log the request details
     logger.info(
@@ -118,22 +117,34 @@ async def chat_completions(request: Request):
         "top_p": top_p
     })
 
-    response:BaseMessage = client.invoke(messages)
+    if stream:
+        async def stream_response():
+            for chunk in client.stream(messages, {"stream": stream}):
+                content = chunk.text() or ""
+                yield content.encode("utf-8")
+                logger.info(f"Streaming chunk: {content}")
 
-    #json_response = json.loads(response.model_dump_json())
+        return StreamingResponse(stream_response(), media_type="text/plain")
 
-    # log pretty print JSON response
-    #logger.warning(
-    #    f"Response: {pretty_print_json(json_response)}")
+    # Can be deleted with custom stream implementation
+        # TODO: Handle caching for streaming -> completion_cache.put(cache_key, response) -> Get full response
+    else:
+        response : BaseMessage = client.invoke(messages)
 
-    # add the result to the cache
-    completion_cache.put(cache_key, response)
+        # json_response = json.loads(response.model_dump_json())
 
-    # For non-cached responses, explicitly set cache header to false
-    return fastapi_responses.JSONResponse(
-        content=response.text(),
-        headers={"X-Cache-Hit": "false"}
-    )
+        # log pretty print JSON response
+        #logger.warning(
+        #    f"Response: {pretty_print_json(json_response)}")
+
+        # add the result to the cache
+        completion_cache.put(cache_key, response)
+
+        # For non-cached responses, explicitly set cache header to false
+        return fastapi_responses.JSONResponse(
+            content=response.text(),
+            headers={"X-Cache-Hit": "false"}
+        )
 
 
 @app.get("/health")
