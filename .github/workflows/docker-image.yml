@@ -10,6 +10,7 @@ jobs:
       SECONDARY_API_KEY: ${{ secrets.SECONDARY_API_KEY }}
       ALLOWED_KEYS: ${{ secrets.ALLOWED_KEYS }}
       INJECTED_PORT: ${{ secrets.INJECTED_PORT }}
+      HAWKI_API_URL: ${{ secrets.HAWKI_API_URL }}
     steps:
     - uses: actions/checkout@v4
     - name: Save tag to file if release
