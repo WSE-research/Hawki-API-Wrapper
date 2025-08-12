@@ -126,8 +126,17 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     Custom Hawki2 API client with comprehensive timeout and rate limiting protection.
     """
     model: str = Field(default="gpt-4o")
+    temperature: float = 0.7
+    max_tokens: int = 2048 # TODO: What's the usual max_tokens?
+    top_p: float = 1.0 # TODO: Can this be used here? Otherwise, throw away
+    base_backoff: float = Field(default=config("HAWKI2_BASE_BACKOFF"))
+    connect_timeout: int = Field(default=config("HAWKI2_CONNECT_TIMEOUT"))
+    read_timeout: int = Field(default=config("HAWKI2_READ_TIMEOUT"))
+    global_timeout: int = Field(default=config("HAWKI2_GLOBAL_TIMEOUT"))
+    max_cooldown: int = Field(default=config("HAWKI2_MAX_COOLDOWN"))
     api_url: str = Field(default="https://hawki2.htwk-leipzig.de/api/ai-req")
-    api_key: str
+    api_key: str = Field(default=config("PRIMARY_API_KEY"))
+    secondary_api_key: str = Field(default=config("SECONDARY_API_KEY"))
     models: Models = Field(default_factory=Models)
     
     primary_failures: int = Field(default=0)
@@ -141,8 +150,8 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self, api_key: str, **kwargs):
-        super().__init__(api_key=api_key, **kwargs)
+    def __init__(self: str, **kwargs):
+        super().__init__(**kwargs)
 
     @property
     def _llm_type(self) -> str:
@@ -243,6 +252,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
             }
         }
 
+        # DEBUG-Logging of formatted messages
         for i, msg in enumerate(formatted_messages):
             role = msg["role"]
             content = self._truncate_text(msg["content"]["text"])
@@ -252,10 +262,12 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         while True:
             current_time = time.time()
             
-            if current_time - start_time > self.global_timeout:
+            # Timeout-Check
+            if current_time - start_time > self.global_timeout: 
                 logger.error(f"Global timeout ({self.global_timeout}s) exceeded for Hawki2 request")
                 raise RuntimeError(f"Request timeout after {self.global_timeout} seconds")
 
+            # Key selection
             current_key, using_secondary, key_type = self._get_available_key(current_time)
             
             wait_time = 0
@@ -361,16 +373,15 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         generation = ChatGeneration(message=AIMessage(content=text))
         logger.debug(f"Completed Hawki2 generation")
         return ChatResult(generations=[generation])
-    
-    def set_model(self, model: str):
+
+    def setConfig(self, settings: dict):
         """
-        Set the model for Hawki2 API requests.
+        Set configuration parameters for the Hawki2 client.
         """
-        self.test_passed_model(model)
-        if self.model != model:
-          logger.info(f"Changing model from {self.model} to {model}")
-          self.model = model
-          logger.info(f"Model set to {self.model}")
+        self.model = settings.get("model", self.model)
+        self.temperature = settings.get("temperature", self.temperature)
+        self.max_tokens = settings.get("max_tokens", self.max_tokens)
+        self.top_p = settings.get("top_p", self.top_p)
 
     def test_passed_model(model: str) -> bool:
         """

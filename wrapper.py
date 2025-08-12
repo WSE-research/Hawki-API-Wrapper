@@ -19,18 +19,21 @@ import sys
 from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
 
-
 from decouple import Config, Csv
+from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages.utils import convert_to_messages
 
 load_dotenv('./service_config/files/.env')
 
-ALLOWED_KEYS = json.loads(config('ALLOWED_KEYS', default='{}')) # TODO: Add our API-keys.
+ALLOWED_KEYS : list[str] = config("ALLOWED_KEYS", default="").split(",")
 PORT = config('PORT', default=8000)
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 
-app = FastAPI()
 
-completion_cache = LRUCache(capacity=LRU_CACHE_CAPACITY)
+app = FastAPI()
+hawkiClient:Hawki2ChatModel = Hawki2ChatModel()
+
+completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
 
 HTTP_SERVER = AsyncClient()
 
@@ -40,11 +43,10 @@ async def root():
     API Information endpoint
     """
     return {
-        "name": "OpenAI API Wrapper",
-        "version": "1.0.0",
+        "name": "Hawki API Wrapper",
+        "version": "0.1.0",
         "endpoints": {
             "/v1/chat/completions": "Chat completions endpoint",
-            "/v1/moderations": "Content moderation endpoint",
             "/health": "Health check endpoint",
             "/v1/models": "List available models"
         },
@@ -58,7 +60,7 @@ async def chat_completions(request: Request):
     Generate a chat completion using the OpenAI API 
     define a route for the wrapper: /v1/chat/completions, cf. https://platform.openai.com/docs/guides/text-generation
     input: a list of messages
-    model: a string, default is "gpt-4o-mini"
+    model: a string, default is "gpt-4o"
     output: a chat completion
     """
 
@@ -70,115 +72,66 @@ async def chat_completions(request: Request):
         f"chat completions processing started for {pretty_print_json(body)}")
 
     # get the API key from the request body
-    api_key = request.headers.get("Authorization").replace("Bearer ", "")
+    request_api_key = request.headers.get("Authorization").replace("Bearer ", "")
     model = body.get("model")
-    messages = body.get("messages")
+    raw_messages = body.get("messages", [])
+    messages = convert_to_messages(raw_messages)
     temperature = body.get("temperature", None)
     max_tokens = body.get("max_tokens", None)
     top_p = body.get("top_p", None)
+    # TODO: Stream
+    stream = body.get("stream", False)
 
     # Log the request details
     logger.info(
-        f"chat completions request received - Shared API Key: {api_key}, Model: {model}")
+        f"chat completions request received - Shared API Key: {request_api_key}, Model: {model}")
     logger.info(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
     cache_key = f"{datetime.now().year}-{datetime.now().isocalendar()[1]}-{json.dumps(body, sort_keys=True)}"
 
     # if the API key is not allowed, return a 401 error
-    if api_key not in ALLOWED_KEYS:
-        logger.warning(f"Unauthorized API key: {api_key}")
+    if request_api_key not in ALLOWED_KEYS:
+        logger.warning(f"Unauthorized API key: {request_api_key}")
         # send a 401 error
         return fastapi_responses.JSONResponse(
             status_code=401,
             content={"error": "Unauthorized"}
         )
-    else:
-        # get the OpenAI API key from the allowed keys
-        openai_api_key = ALLOWED_KEYS[api_key]
 
     # check the input data is contained in the cache holding the last 10000 input_data results
-    json_completion_result = completion_cache.get(cache_key)
-    if json_completion_result is not None:
+    completion_result = completion_cache.get(cache_key)
+    if completion_result is not None:
         logger.warning(
             f"Completion result found in cache for input: {messages} ({cache_key})")
         return fastapi_responses.JSONResponse(
-            content=json_completion_result,
+            content=completion_result.text(),
             headers={"X-Cache-Hit": "true"}
         )
 
-    # url = httpx.URL(path=request.url.path,
-    #                 query=request.url.query.encode("utf-8"))
+    # Set up the client
+    client = hawkiClient
+    client.setConfig({
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "top_p": top_p
+    })
 
-    # headers = request.headers.raw
-    # # replace the Authorization header with the new API key
-    # headers = [
-    #     (key, value) for key, value in headers if key != "Authorization"]
-    # headers.append(("Authorization", f"Bearer {openai_api_key}"))
+    response:BaseMessage = client.invoke(messages)
 
-    # # log the headers
-    # logger.info(f"New headers: {headers}")
-    # url = "https://api.openai.com/v1/chat/completions"
-    # logger.info(f"Send request to OpenAI API: {request.method} {url}")
-    # # wait for all logs to be flushed
-    # sys.stdout.flush()
-    # sys.stderr.flush()
-
-    # rp_req = HTTP_SERVER.build_request(
-    #     request.method, url, headers=headers, content=await request.body()
-    # )
-
-    # logger.info(f"Request I: {rp_req}")
-    # logger.info(f"Request body: {await request.body()}")
-    # logger.info(f"Request headers: {headers}")
-    # logger.info(f"Request method: {request.method}")
-    # logger.info(f"Request url: {url}")
-    # logger.info(f"Request headers: {headers}")
-    # logger.info(f"Request body: {await request.body()}")
-    # sys.stdout.flush()
-    # sys.stderr.flush()
-
-    # rp_resp = await HTTP_SERVER.send(rp_req, stream=True)
-
-    # logger.info(f"Response II: {rp_resp}")
-    # logger.info(f"Response status code: {rp_resp.status_code}")
-    # logger.info(f"Response headers: {rp_resp.headers}")
-    # logger.info(f"Response body: {rp_resp.content}")
-    # sys.stdout.flush()
-    # sys.stderr.flush()
-
-    # return StreamingResponse(
-    #     rp_resp.aiter_raw(),
-    #     status_code=rp_resp.status_code,
-    #     headers=rp_resp.headers,
-    #     background=BackgroundTask(rp_resp.aclose),
-    # )
-
-    # create a client for Hawki # TODO: Check re-use instead of creating a new instance; e.g. by replacing the API key for each request
-    client = Hawki2ChatModel(api_key=api_key)
-
-    # TODO: Continue here
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=top_p
-    )
-
-    json_response = json.loads(response.model_dump_json())
+    #json_response = json.loads(response.model_dump_json())
 
     # log pretty print JSON response
-    logger.warning(
-        f"Response: {pretty_print_json(json_response)}")
+    #logger.warning(
+    #    f"Response: {pretty_print_json(json_response)}")
 
     # add the result to the cache
-    completion_cache.put(cache_key, json_response)
+    completion_cache.put(cache_key, response)
 
     # For non-cached responses, explicitly set cache header to false
     return fastapi_responses.JSONResponse(
-        content=json_response,
+        content=response.text(),
         headers={"X-Cache-Hit": "false"}
     )
 
@@ -191,7 +144,6 @@ async def health():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "moderation_cache_size": len(moderation_cache.cache),
         "completion_cache_size": len(completion_cache.cache)
     }
 
@@ -202,12 +154,12 @@ async def test():
     Test endpoint that returns a simple chat completion to test the wrapper with a live API request 
     """
     test_request = {
-        "model": "gpt-4o-mini",
+        "model": "gpt-4o",
         "messages": [{"role": "user", "content": "Say hello!"}]
     }
 
     # Create a mock request with the default API key
-    shadow_api_key = list(ALLOWED_KEYS.keys())[0]
+    shadow_api_key = ALLOWED_KEYS[0]
     mock_headers = {"Authorization": f"Bearer {shadow_api_key}"}
     mock_request = Request(scope={
         "type": "http",
@@ -218,15 +170,11 @@ async def test():
     logger.warning(f"Test Request Details - API Key: {shadow_api_key}")
     logger.warning(f"Test Request Details - Request Body: {test_request}")
 
-    # moderate the input data
-    moderation = moderate_content(test_request["messages"][0]["content"])
-    logger.warning(f"Moderation: {moderation}")
-
     response = await chat_completions(mock_request)
 
     # get JSON object from JSONResponse and parse it as a JSON object
-    json_response = json.loads(response.body.decode())
-    logger.warning(f"Test Response Details - Raw Response: {json_response}")
+    json_response = json.loads(response.body.decode()) # TODO: Correct access
+    logger.warning(f"Test Response Details - Raw Response: {json_response}") # TODO: Correct access
 
     json_response = json.loads(json_response)
     # pretty print the JSON response
@@ -245,7 +193,6 @@ async def test():
 
 @app.route('/v1/models', methods=['GET'])
 async def list_models(request: Request):
-
     logger.info("List models request received")
 
     # get the API key from the request body or return a BAD REQUEST error
@@ -269,15 +216,9 @@ async def list_models(request: Request):
             content={"error": "Unauthorized"}
         )
 
-    # set the new API key
-    hawki_api_key = ALLOWED_KEYS[api_key]
-
-    # create a client for the OpenAI API
-    client = Hawki2ChatModel(api_key=hawki_api_key)
-
     try:
         # Forward the request to OpenAI API using the client
-        model_list = client.models.list()
+        model_list = hawkiClient.models.list()
 
         # models: pretty print the JSON response
         logger.info(
@@ -309,6 +250,6 @@ async def list_models(request: Request):
 # main function
 if __name__ == "__main__":
     logger.info(f"Starting the wrapper on port {PORT}")
-    logger.info(f"Allowed keys: {list(ALLOWED_KEYS.keys())}")
+    logger.info(f"Allowed keys: {ALLOWED_KEYS}")
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))
