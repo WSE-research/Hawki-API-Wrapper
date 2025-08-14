@@ -18,6 +18,7 @@ from starlette.background import BackgroundTask
 import sys
 from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
+from datetime import datetime
 
 from decouple import Config, Csv
 from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
@@ -268,8 +269,11 @@ def log_request(request: Request):
     logger.info(f"Headers: {request.headers}")
     logger.info(f"Client: {request.client.host}")
 
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    log_filename = f'logs/request_log_{date_str}.txt'
+
     # Write log to file
-    with open('logs/request_log.txt', 'a') as f:
+    with open(log_filename, 'a') as f:
         f.write(f"{datetime.now().isoformat()} - {request.method} {request.url}\n")
         f.write(f"Headers: {request.headers}\n")
         f.write(f"Client: {request.client.host}\n\n")
