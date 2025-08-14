@@ -6,6 +6,9 @@
         "tag": "latest",
         "files": {
             ".env": ".env"
-        }
+        },
+        "volumes": [
+            "/hawki-logs:/app/logs"
+        ]
     }]
 }
