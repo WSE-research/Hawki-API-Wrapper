@@ -67,6 +67,8 @@ async def chat_completions(request: Request):
     # get the request body and parse as JSON
     body = await request.json()
 
+    log_request(request)
+
     # pretty print the request body
     logger.info(
         f"chat completions processing started for {pretty_print_json(body)}")
@@ -205,6 +207,7 @@ async def test():
 @app.route('/v1/models', methods=['GET'])
 async def list_models(request: Request):
     logger.info("List models request received")
+    log_request(request)
 
     # get the API key from the request body or return a BAD REQUEST error
     response400 = fastapi_responses.JSONResponse(
@@ -256,6 +259,21 @@ async def list_models(request: Request):
             content=content,
             status_code=getattr(e, 'http_status', 500)
         )
+
+def log_request(request: Request):
+    """
+    Log the request details
+    """
+    logger.info(f"Request received: {request.method} {request.url}")
+    logger.info(f"Headers: {request.headers}")
+    logger.info(f"Client: {request.client.host}")
+
+    # Write log to file
+    with open('logs/request_log.txt', 'a') as f:
+        f.write(f"{datetime.now().isoformat()} - {request.method} {request.url}\n")
+        f.write(f"Headers: {request.headers}\n")
+        f.write(f"Client: {request.client.host}\n\n")
+
 
 
 # main function
