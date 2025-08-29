@@ -1,7 +1,6 @@
 # define a FAST API wrapper for the OpenAI API
 
 from fastapi import FastAPI, Request
-import openai
 import uvicorn
 from fastapi import responses as fastapi_responses
 from datetime import datetime
@@ -9,19 +8,15 @@ import json
 from decouple import config
 from logger_config import logger
 from cache import LRUCache
-from helpers import pretty_print_json, get_pretty_printed_json_response_body
-import httpx
+from helpers import pretty_print_json
 from httpx import AsyncClient
 from fastapi import Request
 from fastapi.responses import StreamingResponse
-from starlette.background import BackgroundTask
-import sys
 from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
 from datetime import datetime
 
-from decouple import Config, Csv
-from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain.schema import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
 
 load_dotenv('./service_config/files/.env')

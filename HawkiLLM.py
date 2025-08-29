@@ -5,14 +5,10 @@ import random
 import openai
 from typing import List, Optional
 from langchain_openai import ChatOpenAI
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import Runnable
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult, ChatGeneration
 from pydantic import BaseModel, Field
-import json
 from decouple import config
 from dotenv import load_dotenv
 from tenacity import (
@@ -26,14 +22,10 @@ from requests.exceptions import HTTPError, Timeout
 OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
 
 load_dotenv("./service_config/files/.env")  # Load environment variables from .env file
+load_dotenv("./config/models.env")
 logger = logging.getLogger(__name__)
 
-supported_models = [
-            "gpt-4o", "gpt-4o-mini", "o1-mini",
-            "meta-llama-3.1-8b-instruct", "meta-llama-3.1-70b-instruct",
-            "mistral-large-instruct", "gemini-1.5-flash",
-            "gemini-2.0-flash-lite", "gemini-2.5-pro-exp-03-25"
-]
+supported_models: list[str] = config("MODELS", default="").split(",")
 
 
 class RateLimitedOpenAI(ChatOpenAI):
