@@ -124,7 +124,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     base_backoff: float = 10.0
     connect_timeout: int = 30
     read_timeout: int = 60
-    global_timeout: int = 90
+    global_timeout: int = 60
     max_cooldown: int = 300
     api_url: str = Field(default=config("HAWKI_API_URL"))
     api_key: str = Field(default=config("PRIMARY_API_KEY"))
@@ -327,6 +327,10 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                         logger.debug(f"Extracted response: {self._truncate_text(text)}")
                         self._reset_key_failures(using_secondary)
                         return text
+                    # Empty 'text' in response from primary key. Data: {'success': True, 'content': {'text': ''}}
+                    # primary key returning empty responses. Backing off for 34.828811101610285s (0.0h) - failure #3 (total elapsed: 36.2s)
+                    # primary key in cooldown. Waiting 34.8s (0.0h)... (Total elapsed: 36.2s)
+                    # There seems to be no concrete error for some cases and the 'text' field is just empty and the status code is 200
                     else:
                         logger.warning(f"Empty 'text' in response from {key_type} key. Data: {self._truncate_text(str(data), 1000)}")
                         backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())

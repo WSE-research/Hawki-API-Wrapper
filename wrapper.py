@@ -127,22 +127,26 @@ async def chat_completions(request: Request):
     # Can be deleted with custom stream implementation
         # TODO: Handle caching for streaming -> completion_cache.put(cache_key, response) -> Get full response
     else:
-        response : BaseMessage = client.invoke(messages)
-
-        # json_response = json.loads(response.model_dump_json())
-
-        # log pretty print JSON response
-        #logger.warning(
-        #    f"Response: {pretty_print_json(json_response)}")
-
-        # add the result to the cache
-        completion_cache.put(cache_key, response)
-
-        # For non-cached responses, explicitly set cache header to false
-        return fastapi_responses.JSONResponse(
-            content=response.text(),
-            headers={"X-Cache-Hit": "false"}
-        )
+        try:
+            response : BaseMessage = client.invoke(messages)
+            completion_cache.put(cache_key, response)
+            return fastapi_responses.JSONResponse(
+                content=response.text(),
+                headers={"X-Cache-Hit": "false"}
+            )
+        except RuntimeError as e:
+            logger.error(f"Chat completion error: {str(e)}")
+            # Timeout error
+            return fastapi_responses.JSONResponse(
+                status_code=408,
+                content={"error": str(e)}
+            )
+        except Exception as e:
+            logger.error(f"Chat completion unexpected error: {str(e)}")
+            return fastapi_responses.JSONResponse(
+                status_code=500,
+                content={"error": str(e)}
+            )
 
 
 @app.get("/health")
