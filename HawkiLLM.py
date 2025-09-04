@@ -19,7 +19,7 @@ from tenacity import (
 )
 from requests.exceptions import HTTPError, Timeout
 
-OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
+OPENROUTER_MAX_COOLDOWN = 60  # 1 minute
 
 load_dotenv("./service_config/files/.env")  # Load environment variables from .env file
 load_dotenv("./config/models.env")
@@ -122,10 +122,10 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     max_tokens: int = 2048 # TODO: What's the usual max_tokens?
     top_p: float = 1.0 # TODO: Can this be used here? Otherwise, throw away
     base_backoff: float = 10.0
-    connect_timeout: int = 360
-    read_timeout: int = 360
-    global_timeout: int = 360
-    max_cooldown: int = 360
+    connect_timeout: int = 30
+    read_timeout: int = 60
+    global_timeout: int = 90
+    max_cooldown: int = 300
     api_url: str = Field(default=config("HAWKI_API_URL"))
     api_key: str = Field(default=config("PRIMARY_API_KEY"))
     secondary_api_key: str = Field(default=config("SECONDARY_API_KEY"))
@@ -374,6 +374,10 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         self.temperature = settings.get("temperature", self.temperature)
         self.max_tokens = settings.get("max_tokens", self.max_tokens)
         self.top_p = settings.get("top_p", self.top_p)
+        self.connect_timeout = settings.get("connect_timeout", self.connect_timeout)
+        self.read_timeout = settings.get("read_timeout", self.read_timeout)
+        self.global_timeout = settings.get("global_timeout", self.global_timeout)
+        self.max_cooldown = settings.get("max_cooldown", self.max_cooldown)
 
     def test_passed_model(model: str) -> bool:
         """
