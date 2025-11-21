@@ -87,9 +87,8 @@ async def chat_completions(request: Request):
     # create a key from all the request details, and the current week number and year
     cache_key = f"{datetime.now().year}-{datetime.now().isocalendar()[1]}-{json.dumps(body, sort_keys=True)}"
 
-    # if the API key is not allowed, return a 401 error
     try:
-        request_api_key = check_and_test_api_key(request_api_key)
+        client = setClient(request_api_key)
     except ValueError:
         logger.warning(f"Unauthorized API key: {request_api_key}")
         # send a 401 error
@@ -109,13 +108,11 @@ async def chat_completions(request: Request):
         )
 
     # Set up the client
-    client = hawkiClient
     client.setConfig({
         "model": model,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "top_p": top_p,
-        "api_key": request_api_key
+        "top_p": top_p
     })
 
     if stream:
@@ -223,7 +220,7 @@ async def list_models(request: Request):
         return response400
 
     try:
-        api_key = check_and_test_api_key(api_key)
+        api_key = check_and_test_api_key(api_key) # TODO: Remove and replace check
     except ValueError:
         return fastapi_responses.JSONResponse(
             status_code=401,
@@ -261,13 +258,10 @@ async def list_models(request: Request):
         )
         
 # Use this method to check and test the API key whether it is a proxy key or a Hawki Web UI key (for outside users)
-def check_and_test_api_key(api_key: str) -> str:
+def is_api_key_working(api_key: str) -> bool:
     """
     Check if the API key is valid by making a test request to the Hawki API, when it is not contained in the ALLOWED_KEYS list.
     """
-    if api_key in ALLOWED_KEYS: # TODO: Problem: Returning the proxy key would overwrite the internal Hawki web ui key as it is bein set in the client config
-        return api_key
-
     # Test the API key by making a simple request
     test_client = Hawki2ChatModel()
     test_client.setConfig({
@@ -280,11 +274,25 @@ def check_and_test_api_key(api_key: str) -> str:
             {"role": "user", "content": "Hello, are you there?"}
         ])
         logger.info(f"API key is of type Hawki Web UI key and is valid: {api_key}")
-        return api_key
+        return True
     except Exception as e:
         logger.error(f"API key test failed for key: {api_key} with error: {e}")
-        raise ValueError()
+        return False
     
+# Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
+def setClient(api_key: str) -> Hawki2ChatModel:
+    client = Hawki2ChatModel()
+    if api_key in ALLOWED_KEYS: # Use primary shared API key
+        return client
+    elif api_key and is_api_key_working(api_key): # Check if user provided API key (for Hawki Web UI) is valid
+        client.setConfig({
+            "api_key": api_key
+        })
+        return client
+    else: # Not a valid API key
+        raise ValueError("Invalid API Key")
+        
+
 
 def log_request(request: Request):
     """
