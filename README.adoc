@@ -11,10 +11,9 @@ ifdef::env-github[]
 :github-repository: https://github.com/WSE-research/OpenAI-API-wrapper-with-moderation
 endif::[]
 
-= OpenAI API wrapper with moderation
+= Hawki API Wrapper
 
-This is a simple web service that hands over requests to the OpenAI API but checks the messages first via the moderation endpoint.
-Additionally, it will decouple the actual OpenAI API keys, s.t., they don't need to be shared with the clients.
+This is a wrapper for the Hawki framework to support API requests against it, as for now HAWKI only provides a Web UI.
 
 ---
 
@@ -37,6 +36,18 @@ pip install -r requirements.txt
 
 Note: If you are using a virtual environment, make sure to activate it before running the command.
 
+==== Set the environment variables
+
+In the .env-file there are several vars that need to be configured.
+
+```.env
+ALLOWED_KEYS=ALLOWED_KEYS # These are the proxy keys to use for auth to the API, choose yourself
+PRIMARY_API_KEY=PRIMARY_API_KEY # That's your Hawki Web UI key
+SECONDARY_API_KEY=SECONDARY_API_KEY # That's a fallback alternative, if you have only one Hawki Web UI key, insert your Primary Key here, again
+PORT=8080 # adjust as you like, not necessary
+HAWKI_API_URL=HAWKI_API_URL # the Hawki Web UI endpoint, defaults to https://hawki2.htwk-leipzig.de/
+```
+
 ==== Run the Application
 
 [source, bash]
@@ -44,7 +55,7 @@ Note: If you are using a virtual environment, make sure to activate it before ru
 python wrapper.py
 ----
 
-After that, you can access the application at http://localhost:8501.
+After that, you can access the application at http://localhost:8080.
 
 === Docker
 
