@@ -222,8 +222,9 @@ async def list_models(request: Request):
     if api_key is None or api_key == "":
         return response400
 
-    # if the API key is not allowed, return a 401 error
-    if api_key not in ALLOWED_KEYS: # TODO: Try request (if it's an Hawki Web UI key) and if successful, add it as primary (only if no primary key is set!)
+    try:
+        api_key = check_and_test_api_key(api_key)
+    except ValueError:
         return fastapi_responses.JSONResponse(
             status_code=401,
             content={"error": "Unauthorized"}
@@ -259,11 +260,12 @@ async def list_models(request: Request):
             status_code=getattr(e, 'http_status', 500)
         )
         
+# Use this method to check and test the API key whether it is a proxy key or a Hawki Web UI key (for outside users)
 def check_and_test_api_key(api_key: str) -> str:
     """
     Check if the API key is valid by making a test request to the Hawki API, when it is not contained in the ALLOWED_KEYS list.
     """
-    if api_key in ALLOWED_KEYS:
+    if api_key in ALLOWED_KEYS: # TODO: Problem: Returning the proxy key would overwrite the internal Hawki web ui key as it is bein set in the client config
         return api_key
 
     # Test the API key by making a simple request
