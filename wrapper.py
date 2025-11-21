@@ -81,14 +81,16 @@ async def chat_completions(request: Request):
 
     # Log the request details
     logger.info(
-        f"chat completions request received - Shared API Key: {request_api_key}, Model: {model}")
+        f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}")
     logger.info(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
     cache_key = f"{datetime.now().year}-{datetime.now().isocalendar()[1]}-{json.dumps(body, sort_keys=True)}"
 
     # if the API key is not allowed, return a 401 error
-    if request_api_key not in ALLOWED_KEYS:
+    try:
+        request_api_key = check_and_test_api_key(request_api_key)
+    except ValueError:
         logger.warning(f"Unauthorized API key: {request_api_key}")
         # send a 401 error
         return fastapi_responses.JSONResponse(
@@ -112,7 +114,8 @@ async def chat_completions(request: Request):
         "model": model,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "top_p": top_p
+        "top_p": top_p,
+        "api_key": request_api_key
     })
 
     if stream:
@@ -220,7 +223,7 @@ async def list_models(request: Request):
         return response400
 
     # if the API key is not allowed, return a 401 error
-    if api_key not in ALLOWED_KEYS:
+    if api_key not in ALLOWED_KEYS: # TODO: Try request (if it's an Hawki Web UI key) and if successful, add it as primary (only if no primary key is set!)
         return fastapi_responses.JSONResponse(
             status_code=401,
             content={"error": "Unauthorized"}
@@ -255,6 +258,31 @@ async def list_models(request: Request):
             content=content,
             status_code=getattr(e, 'http_status', 500)
         )
+        
+def check_and_test_api_key(api_key: str) -> str:
+    """
+    Check if the API key is valid by making a test request to the Hawki API, when it is not contained in the ALLOWED_KEYS list.
+    """
+    if api_key in ALLOWED_KEYS:
+        return api_key
+
+    # Test the API key by making a simple request
+    test_client = Hawki2ChatModel()
+    test_client.setConfig({
+        "api_key": api_key,
+        "model": "gpt-4o"
+    })
+
+    try:
+        test_response = test_client.invoke([
+            {"role": "user", "content": "Hello, are you there?"}
+        ])
+        logger.info(f"API key is of type Hawki Web UI key and is valid: {api_key}")
+        return api_key
+    except Exception as e:
+        logger.error(f"API key test failed for key: {api_key} with error: {e}")
+        raise ValueError()
+    
 
 def log_request(request: Request):
     """
@@ -278,6 +306,5 @@ def log_request(request: Request):
 # main function
 if __name__ == "__main__":
     logger.info(f"Starting the wrapper on port {PORT}")
-    logger.info(f"Allowed keys: {ALLOWED_KEYS}")
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))

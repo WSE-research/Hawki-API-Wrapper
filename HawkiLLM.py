@@ -374,6 +374,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         self.temperature = settings.get("temperature", self.temperature)
         self.max_tokens = settings.get("max_tokens", self.max_tokens)
         self.top_p = settings.get("top_p", self.top_p)
+        self.api_key = settings.get("api_key")
 
     def test_passed_model(model: str) -> bool:
         """
