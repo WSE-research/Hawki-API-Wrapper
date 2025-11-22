@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
 from datetime import datetime
+from cachetools import TTLCache, cached
 
 from langchain.schema import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
@@ -30,6 +31,7 @@ app = FastAPI()
 hawkiClient:Hawki2ChatModel = Hawki2ChatModel()
 
 completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
+client_cache = TTLCache(maxsize=100, ttl=600)  # 10 minutes TTL
 
 HTTP_SERVER = AsyncClient()
 
@@ -168,7 +170,7 @@ async def test():
     }
 
     # Create a mock request with the default API key
-    shadow_api_key = ALLOWED_KEYS[0]
+    shadow_api_key = ALLOWED_KEYS[0] # TODO: Restrict to avoid misuse?
     mock_headers = {"Authorization": f"Bearer {shadow_api_key}"}
     mock_request = Request(scope={
         "type": "http",
@@ -200,7 +202,7 @@ async def test():
     return json.loads(json.loads(response.body.decode()))
 
 
-@app.route('/v1/models', methods=['GET'])
+@app.get('/v1/models')
 async def list_models(request: Request):
     logger.info("List models request received")
     log_request(request)
@@ -219,9 +221,8 @@ async def list_models(request: Request):
     if api_key is None or api_key == "":
         return response400
 
-    try:
-        api_key = check_and_test_api_key(api_key) # TODO: Remove and replace check
-    except ValueError:
+    if(not is_api_key_working(api_key) and api_key not in ALLOWED_KEYS): # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
+        logger.warning(f"Unauthorized API key: {api_key}")
         return fastapi_responses.JSONResponse(
             status_code=401,
             content={"error": "Unauthorized"}
@@ -280,6 +281,7 @@ def is_api_key_working(api_key: str) -> bool:
         return False
     
 # Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
+@cached(client_cache)
 def setClient(api_key: str) -> Hawki2ChatModel:
     client = Hawki2ChatModel()
     if api_key in ALLOWED_KEYS: # Use primary shared API key

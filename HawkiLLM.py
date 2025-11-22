@@ -119,7 +119,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     """
     model: str = Field(default="gpt-4o")
     temperature: float = 0.7
-    max_tokens: int = 2048 # TODO: What's the usual max_tokens?
+    max_tokens: int = 32768
     top_p: float = 1.0 # TODO: Can this be used here? Otherwise, throw away
     base_backoff: float = 10.0
     connect_timeout: int = 360
