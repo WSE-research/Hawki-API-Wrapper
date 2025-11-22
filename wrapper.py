@@ -1,5 +1,3 @@
-# define a FAST API wrapper for the OpenAI API
-
 from fastapi import FastAPI, Request
 import uvicorn
 from fastapi import responses as fastapi_responses
@@ -221,7 +219,7 @@ async def list_models(request: Request):
     if api_key is None or api_key == "":
         return response400
 
-    if(not is_api_key_working(api_key) and api_key not in ALLOWED_KEYS): # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
+    if api_key not in ALLOWED_KEYS and not is_api_key_working(api_key): # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
         logger.warning(f"Unauthorized API key: {api_key}")
         return fastapi_responses.JSONResponse(
             status_code=401,
@@ -271,13 +269,13 @@ def is_api_key_working(api_key: str) -> bool:
     })
 
     try:
-        test_response = test_client.invoke([
+        test_client.invoke([
             {"role": "user", "content": "Hello, are you there?"}
         ])
-        logger.info(f"API key is of type Hawki Web UI key and is valid: {api_key}")
+        logger.info(f"API key is of type Hawki Web UI key and is valid: {api_key[:8]}...{api_key[-4:]}")
         return True
     except Exception as e:
-        logger.error(f"API key test failed for key: {api_key} with error: {e}")
+        logger.error(f"API key test failed for key: {api_key[:8]}...{api_key[-4:]} with error: {e}")
         return False
     
 # Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
