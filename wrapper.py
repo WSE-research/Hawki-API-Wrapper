@@ -1,5 +1,3 @@
-# define a FAST API wrapper for the OpenAI API
-
 from fastapi import FastAPI, Request
 import uvicorn
 from fastapi import responses as fastapi_responses
@@ -15,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
 from datetime import datetime
+from cachetools import TTLCache, cached
 
 from langchain.schema import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
@@ -30,6 +29,7 @@ app = FastAPI()
 hawkiClient:Hawki2ChatModel = Hawki2ChatModel()
 
 completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
+client_cache = TTLCache(maxsize=100, ttl=600)  # 10 minutes TTL
 
 HTTP_SERVER = AsyncClient()
 
@@ -81,14 +81,15 @@ async def chat_completions(request: Request):
 
     # Log the request details
     logger.info(
-        f"chat completions request received - Shared API Key: {request_api_key}, Model: {model}")
+        f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}")
     logger.info(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
     cache_key = f"{datetime.now().year}-{datetime.now().isocalendar()[1]}-{json.dumps(body, sort_keys=True)}"
 
-    # if the API key is not allowed, return a 401 error
-    if request_api_key not in ALLOWED_KEYS:
+    try:
+        client = setClient(request_api_key)
+    except ValueError:
         logger.warning(f"Unauthorized API key: {request_api_key}")
         # send a 401 error
         return fastapi_responses.JSONResponse(
@@ -107,7 +108,6 @@ async def chat_completions(request: Request):
         )
 
     # Set up the client
-    client = hawkiClient
     client.setConfig({
         "model": model,
         "temperature": temperature,
@@ -168,7 +168,7 @@ async def test():
     }
 
     # Create a mock request with the default API key
-    shadow_api_key = ALLOWED_KEYS[0]
+    shadow_api_key = ALLOWED_KEYS[0] # TODO: Restrict to avoid misuse?
     mock_headers = {"Authorization": f"Bearer {shadow_api_key}"}
     mock_request = Request(scope={
         "type": "http",
@@ -200,7 +200,7 @@ async def test():
     return json.loads(json.loads(response.body.decode()))
 
 
-@app.route('/v1/models', methods=['GET'])
+@app.get('/v1/models')
 async def list_models(request: Request):
     logger.info("List models request received")
     log_request(request)
@@ -219,8 +219,8 @@ async def list_models(request: Request):
     if api_key is None or api_key == "":
         return response400
 
-    # if the API key is not allowed, return a 401 error
-    if api_key not in ALLOWED_KEYS:
+    if api_key not in ALLOWED_KEYS and not is_api_key_working(api_key): # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
+        logger.warning(f"Unauthorized API key: {api_key}")
         return fastapi_responses.JSONResponse(
             status_code=401,
             content={"error": "Unauthorized"}
@@ -255,6 +255,44 @@ async def list_models(request: Request):
             content=content,
             status_code=getattr(e, 'http_status', 500)
         )
+        
+# Use this method to check and test the API key whether it is a proxy key or a Hawki Web UI key (for outside users)
+def is_api_key_working(api_key: str) -> bool:
+    """
+    Check if the API key is valid by making a test request to the Hawki API, when it is not contained in the ALLOWED_KEYS list.
+    """
+    # Test the API key by making a simple request
+    test_client = Hawki2ChatModel()
+    test_client.setConfig({
+        "api_key": api_key,
+        "model": "gpt-4o"
+    })
+
+    try:
+        test_client.invoke([
+            {"role": "user", "content": "Hello, are you there?"}
+        ])
+        logger.info(f"API key is of type Hawki Web UI key and is valid: {api_key[:8]}...{api_key[-4:]}")
+        return True
+    except Exception as e:
+        logger.error(f"API key test failed for key: {api_key[:8]}...{api_key[-4:]} with error: {e}")
+        return False
+    
+# Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
+@cached(client_cache)
+def setClient(api_key: str) -> Hawki2ChatModel:
+    client = Hawki2ChatModel()
+    if api_key in ALLOWED_KEYS: # Use primary shared API key
+        return client
+    elif api_key and is_api_key_working(api_key): # Check if user provided API key (for Hawki Web UI) is valid
+        client.setConfig({
+            "api_key": api_key
+        })
+        return client
+    else: # Not a valid API key
+        raise ValueError("Invalid API Key")
+        
+
 
 def log_request(request: Request):
     """
@@ -278,6 +316,5 @@ def log_request(request: Request):
 # main function
 if __name__ == "__main__":
     logger.info(f"Starting the wrapper on port {PORT}")
-    logger.info(f"Allowed keys: {ALLOWED_KEYS}")
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))

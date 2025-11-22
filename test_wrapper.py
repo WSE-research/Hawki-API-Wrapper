@@ -2,7 +2,6 @@ import unittest
 from fastapi.testclient import TestClient
 from wrapper import app
 from config import ALLOWED_KEYS
-from openai import OpenAI
 import logging
 import colorlog
 import sys
