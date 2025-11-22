@@ -57,24 +57,6 @@ python wrapper.py
 
 After that, you can access the application at http://localhost:8080.
 
-=== Docker
-
-==== Build the Docker image
-
-[source, bash]
-----
-docker build -t openai-api-wrapper-with-moderation:latest .
-----
-
-==== Run the Docker container
-
-[source, bash]
-----
-docker run -p 8000:8000  --name openai-api-wrapper-with-moderation  --env-file=service_config/files/env openai-api-wrapper-with-moderation:latest 
-----
-
-Now, you can access the application at http://localhost:8000.
-
 == Contribute
 
 We are happy to receive your contributions. 
