@@ -1,11 +1,12 @@
 import unittest
 from fastapi.testclient import TestClient
 from wrapper import app
-from config import ALLOWED_KEYS
+# from config import ALLOWED_KEYS
 import logging
 import colorlog
 import sys
 import json
+import os
 
 logger = logging.getLogger(__name__)
 logger.level = logging.DEBUG
@@ -23,16 +24,21 @@ handler.setFormatter(colorlog.ColoredFormatter(
 logger.addHandler(handler)
 logger.setLevel(logging.DEBUG)
 
+# get the ALLOWED_KEYS from the environment variable
+ALLOWED_KEYS = os.getenv("ALLOWED_KEYS").split(",")
+logger.warning(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
+
+
 class TestChatCompletions(unittest.TestCase):
     def setUp(self):
-        print("Setting up test client")
+        logger.warning("Setting up test client")
         self.client = TestClient(app)
-        self.valid_key = list(ALLOWED_KEYS.keys())[0]  # Get first allowed key
+        self.valid_key = ALLOWED_KEYS[0]  # Get first allowed key
         logger.warning(f"Using key: {self.valid_key}")
         logger.warning(f"Using base URL: {self.client.base_url}")
 
     def test_trivial(self):
-        self.assertEqual('foo'.upper(), 'FOO') 
+        self.assertEqual('foo'.upper(), 'FOO')
         logger.warning(f"Client URL: {self.client.base_url}")
 
     # test access to health endpoint
@@ -41,6 +47,11 @@ class TestChatCompletions(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "healthy")
         self.assertIn("timestamp", response.json())
+
+    def test_models_endpoint(self):
+        response = self.client.get("/v1/models")
+        self.assertEqual(response.status_code, 200)
+        logger.warning(f"Models: {response.json()}")
 
     def test_moderation_endpoint(self):
         """Test the moderation endpoint with safe and unsafe content"""
@@ -68,8 +79,8 @@ class TestChatCompletions(unittest.TestCase):
             }
         )
         self.assertEqual(response.status_code, 200)
-        #self.assertTrue(response.json()["results"][0]["flagged"])
-        
+        # self.assertTrue(response.json()["results"][0]["flagged"])
+
     def test_chat_completions_endpoint(self):
         response = self.client.post(
             "/v1/chat/completions",
@@ -79,10 +90,10 @@ class TestChatCompletions(unittest.TestCase):
             },
             headers={"Authorization": f"Bearer {self.valid_key}"}
         )
-        
+
         assert response.status_code == 200
-        
+
 
 if __name__ == '__main__':
     # Run with buffer=False to show print statements
-    unittest.main(buffer=False) 
+    unittest.main(buffer=False)

@@ -20,18 +20,23 @@ from langchain_core.messages.utils import convert_to_messages
 
 load_dotenv('./service_config/files/.env')
 
-ALLOWED_KEYS : list[str] = config("ALLOWED_KEYS", default="").split(",")
+ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default="").split(",")
 PORT = config('PORT', default=8000)
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
+HAWKI_API_URL = config(
+    'HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de')
 
-
+logger.warning(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
+logger.warning(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
+logger.warning(f"HAWKI_API_URL: {HAWKI_API_URL}")
 app = FastAPI()
-hawkiClient:Hawki2ChatModel = Hawki2ChatModel()
+hawkiClient: Hawki2ChatModel = Hawki2ChatModel()
 
 completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
 client_cache = TTLCache(maxsize=100, ttl=600)  # 10 minutes TTL
 
 HTTP_SERVER = AsyncClient()
+
 
 @app.get("/")
 async def root():
@@ -49,6 +54,7 @@ async def root():
         "documentation": "/docs",
         "status": "operational"
     }
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -70,18 +76,19 @@ async def chat_completions(request: Request):
         f"chat completions processing started for {pretty_print_json(body)}")
 
     # get the API key from the request body
-    request_api_key = request.headers.get("Authorization").replace("Bearer ", "")
+    request_api_key = request.headers.get(
+        "Authorization").replace("Bearer ", "")
     model = body.get("model")
     raw_messages = body.get("messages", [])
     messages = convert_to_messages(raw_messages)
     temperature = body.get("temperature", None)
     max_tokens = body.get("max_tokens", None)
     top_p = body.get("top_p", None)
-    stream : bool = body.get("stream", False)
+    stream: bool = body.get("stream", False)
 
     # Log the request details
     logger.info(
-        f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}")
+        f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}, Temperature: {temperature}, Max Tokens: {max_tokens}, Top P: {top_p}, Stream: {stream}")
     logger.info(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
@@ -127,12 +134,12 @@ async def chat_completions(request: Request):
     # Can be deleted with custom stream implementation
         # TODO: Handle caching for streaming -> completion_cache.put(cache_key, response) -> Get full response
     else:
-        response : BaseMessage = client.invoke(messages)
+        response: BaseMessage = client.invoke(messages)
 
         # json_response = json.loads(response.model_dump_json())
 
         # log pretty print JSON response
-        #logger.warning(
+        # logger.warning(
         #    f"Response: {pretty_print_json(json_response)}")
 
         # add the result to the cache
@@ -168,7 +175,7 @@ async def test():
     }
 
     # Create a mock request with the default API key
-    shadow_api_key = ALLOWED_KEYS[0] # TODO: Restrict to avoid misuse?
+    shadow_api_key = ALLOWED_KEYS[0]  # TODO: Restrict to avoid misuse?
     mock_headers = {"Authorization": f"Bearer {shadow_api_key}"}
     mock_request = Request(scope={
         "type": "http",
@@ -182,8 +189,9 @@ async def test():
     response = await chat_completions(mock_request)
 
     # get JSON object from JSONResponse and parse it as a JSON object
-    json_response = json.loads(response.body.decode()) # TODO: Correct access
-    logger.warning(f"Test Response Details - Raw Response: {json_response}") # TODO: Correct access
+    json_response = json.loads(response.body.decode())  # TODO: Correct access
+    # TODO: Correct access
+    logger.warning(f"Test Response Details - Raw Response: {json_response}")
 
     json_response = json.loads(json_response)
     # pretty print the JSON response
@@ -219,7 +227,8 @@ async def list_models(request: Request):
     if api_key is None or api_key == "":
         return response400
 
-    if api_key not in ALLOWED_KEYS and not is_api_key_working(api_key): # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
+    # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
+    if api_key not in ALLOWED_KEYS and not is_api_key_working(api_key):
         logger.warning(f"Unauthorized API key: {api_key}")
         return fastapi_responses.JSONResponse(
             status_code=401,
@@ -255,8 +264,10 @@ async def list_models(request: Request):
             content=content,
             status_code=getattr(e, 'http_status', 500)
         )
-        
+
 # Use this method to check and test the API key whether it is a proxy key or a Hawki Web UI key (for outside users)
+
+
 def is_api_key_working(api_key: str) -> bool:
     """
     Check if the API key is valid by making a test request to the Hawki API, when it is not contained in the ALLOWED_KEYS list.
@@ -272,26 +283,30 @@ def is_api_key_working(api_key: str) -> bool:
         test_client.invoke([
             {"role": "user", "content": "Hello, are you there?"}
         ])
-        logger.info(f"API key is of type Hawki Web UI key and is valid: {api_key[:8]}...{api_key[-4:]}")
+        logger.info(
+            f"API key is of type Hawki Web UI key and is valid: {api_key[:8]}...{api_key[-4:]}")
         return True
     except Exception as e:
-        logger.error(f"API key test failed for key: {api_key[:8]}...{api_key[-4:]} with error: {e}")
+        logger.error(
+            f"API key test failed for key: {api_key[:8]}...{api_key[-4:]} with error: {e}")
         return False
-    
+
 # Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
+
+
 @cached(client_cache)
 def setClient(api_key: str) -> Hawki2ChatModel:
     client = Hawki2ChatModel()
-    if api_key in ALLOWED_KEYS: # Use primary shared API key
+    if api_key in ALLOWED_KEYS:  # Use primary shared API key
         return client
-    elif api_key and is_api_key_working(api_key): # Check if user provided API key (for Hawki Web UI) is valid
+    # Check if user provided API key (for Hawki Web UI) is valid
+    elif api_key and is_api_key_working(api_key):
         client.setConfig({
             "api_key": api_key
         })
         return client
-    else: # Not a valid API key
+    else:  # Not a valid API key
         raise ValueError("Invalid API Key")
-        
 
 
 def log_request(request: Request):
@@ -310,7 +325,6 @@ def log_request(request: Request):
         f.write(f"{datetime.now().isoformat()} - {request.method} {request.url}\n")
         f.write(f"Headers: {request.headers}\n")
         f.write(f"Client: {request.client.host}\n\n")
-
 
 
 # main function
