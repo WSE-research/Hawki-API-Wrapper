@@ -229,27 +229,27 @@ async def list_models(request: Request):
     logger.info("List models request received")
     log_request(request)
 
-    # get the API key from the request body or return a BAD REQUEST error
-    response400 = fastapi_responses.JSONResponse(
-        status_code=400,
-        content={"error": "Bad Request: Missing API key"}
-    )
-    try:
-        api_key = request.headers.get("Authorization").replace("Bearer ", "")
-    except Exception as e:
-        logger.error(f"Error getting API key: {e}")
-        return response400
-
-    if api_key is None or api_key == "":
-        return response400
-
-    # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
-    if api_key not in ALLOWED_KEYS and not is_api_key_working(api_key):
-        logger.warning(f"Unauthorized API key: {api_key}")
-        return fastapi_responses.JSONResponse(
-            status_code=401,
-            content={"error": "Unauthorized"}
-        )
+#    # get the API key from the request body or return a BAD REQUEST error
+#    response400 = fastapi_responses.JSONResponse(
+#        status_code=400,
+#        content={"error": "Bad Request: Missing API key"}
+#    )
+#    try:
+#        api_key = request.headers.get("Authorization").replace("Bearer ", "")
+#    except Exception as e:
+#        logger.error(f"Error getting API key: {e}")
+#        return response400
+#
+#    if api_key is None or api_key == "":
+#        return response400
+#
+#    # If key is not a proxy key or a valid Hawki Web UI key, then unauthorized
+#    if api_key not in ALLOWED_KEYS and not is_api_key_working(api_key):
+#        logger.warning(f"Unauthorized API key: {api_key}")
+#        return fastapi_responses.JSONResponse(
+#            status_code=401,
+#            content={"error": "Unauthorized"}
+#        )
 
     try:
         # Forward the request to OpenAI API using the client
