@@ -57,6 +57,21 @@ python wrapper.py
 
 After that, you can access the application at http://localhost:8080.
 
+==== Exemplary request
+
+The request format follows the OpenAI standard, i.e.:
+
+```json
+{
+  "model":"gpt-4o",
+  "messages":
+  [
+    {"role":"system","content":"You are Auto Router, a large language model from openrouter.\n\nFormatting Rules:\n- Use Markdown **only when semantically appropriate**. Examples: `inline code`, ```code fences```, tables, and lists.\n- In assistant responses, format file names, directory paths, function names, and class names with backticks (`).\n- For math: use \\( and \\) for inline expressions, and \\[ and \\] for display (block) math."},
+    {"role":"user","content":"Whats up?"}
+  ]
+}
+```
+
 == Contribute
 
 We are happy to receive your contributions. 
