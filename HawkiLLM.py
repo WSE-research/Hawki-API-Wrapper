@@ -349,6 +349,9 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                     backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
                     logger.warning(f"{key_type} key rate limited (429). Backing off for {backoff}s ({backoff/3600:.1f}h) - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
                     continue
+                elif status_code == 401:
+                    logger.error(f"Unauthorized (401) error with {key_type} key: {str(e)}")
+                    raise RuntimeError(f"Unauthorized access with {key_type} key")
                 else:
                     logger.error(f"Hawki2 API request failed with {key_type} key: {str(e)}")
                     # Set cooldown for this key and try the other
