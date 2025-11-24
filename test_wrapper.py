@@ -85,7 +85,7 @@ class TestChatCompletions(unittest.TestCase):
         response = self.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-3.5-turbo",
+                "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": "Hello"}]
             },
             headers={"Authorization": f"Bearer {self.valid_key}"}
