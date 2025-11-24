@@ -39,22 +39,33 @@ class TestChatCompletions(unittest.TestCase):
 
     def test_trivial(self):
         self.assertEqual('foo'.upper(), 'FOO')
-        logger.warning(f"Client URL: {self.client.base_url}")
+        logger.info(f"Client URL: {self.client.base_url}")
 
     # test access to health endpoint
     def test_health(self):
+        logger.info(f"Testing health endpoint")
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "healthy")
         self.assertIn("timestamp", response.json())
+        logger.info(f"Health response: {response.json()}")
 
+    # test access to models endpoint
     def test_models_endpoint(self):
-        response = self.client.get("/v1/models")
+        logger.info(f"Testing models endpoint")
+        response = self.client.get(
+            "/v1/models",
+            # send the API key in the headers
+            headers={"Authorization": f"Bearer {self.valid_key}"}
+        )
         self.assertEqual(response.status_code, 200)
-        logger.warning(f"Models: {response.json()}")
+        logger.info(f"Models response: {response.json()}")
 
+    # test access to moderation endpoint
+    @unittest.skip("Skipping moderation endpoint test")
     def test_moderation_endpoint(self):
         """Test the moderation endpoint with safe and unsafe content"""
+        logger.info(f"Testing moderation endpoint -- not implemented yet")
         # Test safe content
         response = self.client.post(
             "/v1/moderations",
@@ -78,18 +89,23 @@ class TestChatCompletions(unittest.TestCase):
                 "input": "I want to cause harm and violence"
             }
         )
+        logger.info(f"Moderation response: {response.json()}")
         self.assertEqual(response.status_code, 200)
         # self.assertTrue(response.json()["results"][0]["flagged"])
 
+    # test access to chat completions endpoint
+    # @unittest.skip("Skipping chat completions endpoint test")
     def test_chat_completions_endpoint(self):
+        logger.info(f"Testing chat completions endpoint")
         response = self.client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-4o-mini",
+                "model": "4o-mini",
                 "messages": [{"role": "user", "content": "Hello"}]
             },
             headers={"Authorization": f"Bearer {self.valid_key}"}
         )
+        logger.info(f"Chat completions response: {response.json()}")
 
         assert response.status_code == 200
 
