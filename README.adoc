@@ -45,7 +45,7 @@ ALLOWED_KEYS=ALLOWED_KEYS # These are the proxy keys to use for auth to the API,
 PRIMARY_API_KEY=PRIMARY_API_KEY # That's your Hawki Web UI key
 SECONDARY_API_KEY=SECONDARY_API_KEY # That's a fallback alternative, if you have only one Hawki Web UI key, insert your Primary Key here, again
 PORT=8080 # adjust as you like, not necessary
-HAWKI_API_URL=HAWKI_API_URL # the Hawki Web UI endpoint, defaults to https://hawki2.htwk-leipzig.de/
+HAWKI_API_URL=HAWKI_API_URL # the Hawki Web UI endpoint, defaults to https://hawki2.htwk-leipzig.de/api/ai-req
 ```
 
 ==== Run the Application
