@@ -73,7 +73,7 @@ class TestChatCompletions(unittest.TestCase):
             "/v1/chat/completions",
             json={
                 "model": MODEL_FOR_TESTING,
-                "messages": [{"role": "user", "content": "Hello"}]
+                "messages": [{"role": "user", "content": "Hello there"}]
             },
             headers={"Authorization": f"Bearer {self.valid_key}"}
         )
@@ -81,9 +81,24 @@ class TestChatCompletions(unittest.TestCase):
 
         assert response.status_code == 200
 
+    # test access to chat completions endpoint a second time to test caching
+    def test_050_chat_completions_endpoint_cached(self):
+        logger.info(f"Testing chat completions endpoint (cached)")
+        response = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": MODEL_FOR_TESTING,
+                "messages": [{"role": "user", "content": "Hello there"}]
+            },
+            headers={"Authorization": f"Bearer {self.valid_key}"}
+        )
+        logger.info(f"Chat completions response (cached): {response.json()}")
+        assert response.status_code == 200
+        assert response.headers.get("X-Cache-Hit") == "true"
+
     # test access to moderation endpoint
     @unittest.skip("Skipping moderation endpoint test")
-    def test_050_moderation_endpoint(self):
+    def test_060_moderation_endpoint(self):
         """Test the moderation endpoint with safe and unsafe content"""
         logger.info(f"Testing moderation endpoint -- not implemented yet")
         # Test safe content

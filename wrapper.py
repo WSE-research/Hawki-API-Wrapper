@@ -14,7 +14,7 @@ from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
 from datetime import datetime
 from cachetools import TTLCache, cached
-
+from pprint import pformat
 from langchain.schema import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
 
@@ -110,7 +110,7 @@ async def chat_completions(request: Request):
         logger.warning(
             f"Completion result found in cache for input: {messages} ({cache_key})")
         return fastapi_responses.JSONResponse(
-            content=completion_result.text(),
+            content=completion_result,
             headers={"X-Cache-Hit": "true"}
         )
 
@@ -143,13 +143,29 @@ async def chat_completions(request: Request):
         #    f"Response: {pretty_print_json(json_response)}")
 
         # add the result to the cache
-        completion_cache.put(cache_key, response)
+
+        # log the response
+        logger.info(
+            f"Response completion: {pformat(response.model_dump(), indent=4)}")
 
         # For non-cached responses, explicitly set cache header to false
-        return fastapi_responses.JSONResponse(
-            content=response.text(),
-            headers={"X-Cache-Hit": "false"}
-        )
+        try:
+            response_json = json.loads(response.model_dump_json())
+            response_content = response_json.get("content")
+            completion_cache.put(cache_key, response_content)
+            logger.info(f"Response added to cache: {cache_key}")
+            return fastapi_responses.JSONResponse(
+                content=response_content,
+                headers={"X-Cache-Hit": "false"}
+            )
+        except Exception as e:
+            logger.error(f"Error parsing response: {e}")
+            logger.error(
+                f"Response: {pformat(response.model_dump(), indent=4)}")
+            return fastapi_responses.JSONResponse(
+                content={"error": "Internal Server Error"},
+                status_code=500
+            )
 
 
 @app.get("/health")
