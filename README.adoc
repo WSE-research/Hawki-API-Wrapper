@@ -11,9 +11,9 @@ ifdef::env-github[]
 :github-repository: https://github.com/WSE-research/OpenAI-API-wrapper-with-moderation
 endif::[]
 
-= Hawki API Wrapper
+= Hawki API Wrapper (beta)
 
-This is a wrapper for the Hawki framework to support API requests against it, as for now HAWKI only provides a Web UI.
+This is a wrapper for the https://github.com/hawk-digital-environments/HAWKI[HAWKI] framework to support quasi-standard API requests using the https://platform.openai.com/docs/api-reference/introduction[OpenAI API format]. 
 
 ---
 
@@ -38,7 +38,7 @@ Note: If you are using a virtual environment, make sure to activate it before ru
 
 ==== Set the environment variables
 
-In the .env-file there are several vars that need to be configured.
+In the `.env-file`, there are several vars that need to be configured.
 
 ```.env
 ALLOWED_KEYS=ALLOWED_KEYS # These are the proxy keys to use for auth to the API, choose yourself
