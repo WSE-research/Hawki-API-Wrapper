@@ -30,7 +30,7 @@ logger.setLevel(logging.DEBUG)
 ALLOWED_KEYS = os.getenv("ALLOWED_KEYS").split(",")
 logger.warning(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
 
-MODEL_FOR_TESTING = config("MODEL_FOR_TESTING", default="gpt-4o-mini")
+MODEL_FOR_TESTING = config("MODEL_FOR_TESTING", default="gpt-4o")
 
 
 class TestChatCompletions(unittest.TestCase):
