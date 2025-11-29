@@ -17,6 +17,7 @@ from cachetools import TTLCache, cached
 from pprint import pformat
 from langchain.schema import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
+import time
 
 load_dotenv('./service_config/files/.env')
 
@@ -58,26 +59,32 @@ async def root():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    """
-    Generate a chat completion using the OpenAI API 
-    define a route for the wrapper: /v1/chat/completions, cf. https://platform.openai.com/docs/guides/text-generation
-    input: a list of messages
-    model: a string, default is "gpt-4o"
-    output: a chat completion
-    """
-
-    # get the request body and parse as JSON
+    """FastAPI endpoint wrapper: parse request and delegate to core processor."""
     body = await request.json()
+    auth_header = request.headers.get("Authorization")
+    return await process_chat_request(body, auth_header, request)
 
-    log_request(request)
 
-    # pretty print the request body
-    logger.info(
-        f"chat completions processing started for {pretty_print_json(body)}")
+async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None):
+    """Process a chat request given a plain dict `body` and `auth_header` string.
+    If `request_obj` is provided, it will be used for logging.
+    Returns a FastAPI `JSONResponse`.
+    """
+    # Optional logging
+    if request_obj is not None:
+        try:
+            log_request(request_obj)
+        except Exception:
+            pass
 
-    # get the API key from the request body
-    request_api_key = request.headers.get(
-        "Authorization").replace("Bearer ", "")
+    # pretty print the request body for logs
+    logger.info(f"chat completions processing started for {pretty_print_json(body)}")
+
+    # extract API key from header
+    request_api_key = None
+    if auth_header:
+        request_api_key = auth_header.replace("Bearer ", "")
+
     model = body.get("model")
     raw_messages = body.get("messages", [])
     messages = convert_to_messages(raw_messages)
@@ -107,8 +114,7 @@ async def chat_completions(request: Request):
     # check the input data is contained in the cache holding the last 10000 input_data results
     completion_result = completion_cache.get(cache_key)
     if completion_result is not None:
-        logger.warning(
-            f"Completion result found in cache for input: {messages} ({cache_key})")
+        logger.warning(f"Completion result found in cache for input: {messages} ({cache_key})")
         return fastapi_responses.JSONResponse(
             content=completion_result,
             headers={"X-Cache-Hit": "true"}
@@ -145,8 +151,7 @@ async def chat_completions(request: Request):
         # add the result to the cache
 
         # log the response
-        logger.info(
-            f"Response completion: {pformat(response.model_dump(), indent=4)}")
+        logger.info(f"Response completion: {pformat(response.model_dump(), indent=4)}")
 
         # For non-cached responses, explicitly set cache header to false
         try:
@@ -156,12 +161,12 @@ async def chat_completions(request: Request):
             logger.info(f"Response added to cache: {cache_key}")
             return fastapi_responses.JSONResponse(
                 content=response_content,
-                headers={"X-Cache-Hit": "false"}
+                headers={"X-Cache-Hit": "false"},
+                status_code=200
             )
         except Exception as e:
             logger.error(f"Error parsing response: {e}")
-            logger.error(
-                f"Response: {pformat(response.model_dump(), indent=4)}")
+            logger.error(f"Response: {pformat(response.model_dump(), indent=4)}")
             return fastapi_responses.JSONResponse(
                 content={"error": "Internal Server Error"},
                 status_code=500
@@ -173,10 +178,73 @@ async def health():
     """
     Health check endpoint
     """
+    
+    HEALTH_CHECK_PROMPT = "Health check test."
+    AUTH = f"Bearer {ALLOWED_KEYS[0]}"
+    modelCheckJson = {
+        "models": {}
+    }
+    
+    # Run model tests
+    for model in hawkiClient.models.list():
+
+        request = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": HEALTH_CHECK_PROMPT}
+            ]
+        }
+
+        # First attempt
+        try:
+            request1 = {}
+            current_time = time.time()
+            response = await process_chat_request(request, AUTH)
+            runtime_in_ms = (time.time() - current_time) * 1000
+            request1["status"] = "available"
+            request1["prompt"] = HEALTH_CHECK_PROMPT
+            request1["response"] = response["content"]
+            request1["started_at"] = current_time
+            request1["runtime_in_ms"] = runtime_in_ms
+            request1["cached"] = response.headers.get("X-Cache-Hit") == "true"
+        except Exception as e:
+            request1["status"] = "unavailable"
+            request1["prompt"] = HEALTH_CHECK_PROMPT
+            request1["response"] = str(e)
+            request1["started_at"] = current_time
+            request1["runtime_in_ms"] = None
+            request1["cached"] = False
+
+        # Second attempt
+        try:
+            request2 = {}
+            current_time = time.time()  
+            response = await chat_completions(request)
+            runtime_in_ms = (time.time() - current_time) * 1000
+            request2["status"] = "available"
+            request2["prompt"] = HEALTH_CHECK_PROMPT
+            request2["response"] = response["content"]
+            request2["started_at"] = current_time
+            request2["runtime_in_ms"] = runtime_in_ms
+            request2["cached"] = response.headers.get("X-Cache-Hit") == "true"
+        except Exception as e:
+            request2["status"] = "unavailable"
+            request2["prompt"] = HEALTH_CHECK_PROMPT
+            request2["response"] = str(e)
+            request2["started_at"] = current_time
+            request2["runtime_in_ms"] = None
+            request2["cached"] = False
+            
+        # Add model entry if not exists
+
+        modelCheckJson["models"][f"{model}"] = {}
+        modelCheckJson["models"][f"{model}"]["requests"] = [request1, request2]
+    
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "completion_cache_size": len(completion_cache.cache)
+        "completion_cache_size": len(completion_cache.cache),
+        "model_check": modelCheckJson
     }
 
 
