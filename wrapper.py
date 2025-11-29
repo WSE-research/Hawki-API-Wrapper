@@ -29,7 +29,7 @@ HAWKI_API_URL = config(
 logger.warning(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
 logger.warning(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
 logger.warning(f"HAWKI_API_URL: {HAWKI_API_URL}")
-app = FastAPI()
+app = FastAPI(docs_url="/swagger-ui", redoc_url=None)
 hawkiClient: Hawki2ChatModel = Hawki2ChatModel()
 
 completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
