@@ -1,9 +1,11 @@
+import asyncio
 from fastapi import FastAPI, Request
 import uvicorn
 from fastapi import responses as fastapi_responses
 from datetime import datetime
 import json
 from decouple import config
+from exceptions import ModelNotFoundException
 from logger_config import logger
 from cache import LRUCache
 from helpers import pretty_print_json
@@ -17,23 +19,27 @@ from cachetools import TTLCache, cached
 from pprint import pformat
 from langchain.schema import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
+import time
 
 load_dotenv('./service_config/files/.env')
 
 ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default="").split(",")
 PORT = config('PORT', default=8000)
-LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
-HAWKI_API_URL = config(
-    'HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de')
+HAWKI_API_URL = config('HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
+HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
 
-logger.warning(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
-logger.warning(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
-logger.warning(f"HAWKI_API_URL: {HAWKI_API_URL}")
-app = FastAPI()
+logger.debug(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
+logger.debug(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
+logger.info(f"HAWKI_API_URL: {HAWKI_API_URL}")
+app = FastAPI(docs_url="/swagger-ui", redoc_url=None)
 hawkiClient: Hawki2ChatModel = Hawki2ChatModel()
 
+LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
-client_cache = TTLCache(maxsize=100, ttl=600)  # 10 minutes TTL
+
+CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
+CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
+client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
 HTTP_SERVER = AsyncClient()
 
@@ -52,32 +58,40 @@ async def root():
             "/v1/models": "List available models"
         },
         "documentation": "/docs",
-        "status": "operational"
+        "status": "operational",
+        "available_models": hawkiClient.models.list()
     }
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    """
-    Generate a chat completion using the OpenAI API 
-    define a route for the wrapper: /v1/chat/completions, cf. https://platform.openai.com/docs/guides/text-generation
-    input: a list of messages
-    model: a string, default is "gpt-4o"
-    output: a chat completion
-    """
-
-    # get the request body and parse as JSON
+    """FastAPI endpoint wrapper: parse request and delegate to core processor."""
     body = await request.json()
+    auth_header = request.headers.get("Authorization")
+    return await process_chat_request(body, auth_header, request)
 
-    log_request(request)
 
-    # pretty print the request body
-    logger.info(
-        f"chat completions processing started for {pretty_print_json(body)}")
+async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None):
+    """
+    Process a chat request given a plain dict `body` and `auth_header` string.
+    If `request_obj` is provided, it will be used for logging.
+    Returns a FastAPI `JSONResponse`.
+    """
+    # Optional logging
+    if request_obj is not None:
+        try:
+            log_request(request_obj)
+        except Exception:
+            pass
 
-    # get the API key from the request body
-    request_api_key = request.headers.get(
-        "Authorization").replace("Bearer ", "")
+    # pretty print the request body for logs
+    logger.info(f"chat completions processing started for {pretty_print_json(body)}")
+
+    # extract API key from header
+    request_api_key = None
+    if auth_header:
+        request_api_key = auth_header.replace("Bearer ", "")
+
     model = body.get("model")
     raw_messages = body.get("messages", [])
     messages = convert_to_messages(raw_messages)
@@ -87,8 +101,7 @@ async def chat_completions(request: Request):
     stream: bool = body.get("stream", False)
 
     # Log the request details
-    logger.info(
-        f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}, Temperature: {temperature}, Max Tokens: {max_tokens}, Top P: {top_p}, Stream: {stream}")
+    logger.info(f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}, Temperature: {temperature}, Max Tokens: {max_tokens}, Top P: {top_p}, Stream: {stream}")
     logger.info(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
@@ -107,21 +120,28 @@ async def chat_completions(request: Request):
     # check the input data is contained in the cache holding the last 10000 input_data results
     completion_result = completion_cache.get(cache_key)
     if completion_result is not None:
-        logger.warning(
-            f"Completion result found in cache for input: {messages} ({cache_key})")
+        logger.warning(f"Completion result found in cache for input: {messages} ({cache_key})")
         return fastapi_responses.JSONResponse(
             content=completion_result,
             headers={"X-Cache-Hit": "true"}
         )
 
     # Set up the client
-    client.setConfig({
-        "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "top_p": top_p
-    })
-
+    try:
+        client.setConfig({
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p
+        })
+    except ModelNotFoundException as e:
+        logger.error(f"Model not found: {str(e)}")
+        return fastapi_responses.JSONResponse(
+            content={"error": str(e)},
+            status_code=400
+        )
+    
+    logger.info("After set client config")
     if stream:
         async def stream_response():
             for chunk in client.stream(messages, {"stream": stream}):
@@ -134,19 +154,18 @@ async def chat_completions(request: Request):
     # Can be deleted with custom stream implementation
         # TODO: Handle caching for streaming -> completion_cache.put(cache_key, response) -> Get full response
     else:
-        response: BaseMessage = client.invoke(messages)
+        try:
+            response: BaseMessage = client.invoke(messages)
+        except Exception as e:
+            logger.error(f"Error: {str(e)}")
 
-        # json_response = json.loads(response.model_dump_json())
-
-        # log pretty print JSON response
-        # logger.warning(
-        #    f"Response: {pretty_print_json(json_response)}")
-
-        # add the result to the cache
+            return fastapi_responses.JSONResponse(
+                content={"error": "Request error"},
+                status_code=500
+            )
 
         # log the response
-        logger.info(
-            f"Response completion: {pformat(response.model_dump(), indent=4)}")
+        logger.info(f"Response completion: {pformat(response.model_dump(), indent=4)}")
 
         # For non-cached responses, explicitly set cache header to false
         try:
@@ -156,12 +175,12 @@ async def chat_completions(request: Request):
             logger.info(f"Response added to cache: {cache_key}")
             return fastapi_responses.JSONResponse(
                 content=response_content,
-                headers={"X-Cache-Hit": "false"}
+                headers={"X-Cache-Hit": "false"},
+                status_code=200
             )
         except Exception as e:
             logger.error(f"Error parsing response: {e}")
-            logger.error(
-                f"Response: {pformat(response.model_dump(), indent=4)}")
+            logger.error(f"Response: {pformat(response.model_dump(), indent=4)}")
             return fastapi_responses.JSONResponse(
                 content={"error": "Internal Server Error"},
                 status_code=500
@@ -173,11 +192,75 @@ async def health():
     """
     Health check endpoint
     """
+    AUTH = f"Bearer {ALLOWED_KEYS[0]}"
+    modelCheckJson = {
+        "models": {}
+    }
+    
+    # Run model tests
+    for model in hawkiClient.models.list_initial():
+
+        # First attempt
+        result1 = await health_check_model(model)
+
+        # Second attempt
+        result2 = await health_check_model(model)
+            
+        # Add model entry if not exists
+
+        modelCheckJson["models"][f"{model}"] = {}
+        modelCheckJson["models"][f"{model}"]["requests"] = [result1, result2]
+
+
+    # Update available models in hawkiClient
+    available_models = []
+    for model_name, model_info in modelCheckJson["models"].items():
+        details = model_info["requests"][0]
+        status = details.get("status")
+        if status == "available":
+            logger.info(f"Model {model_name} is {status}")
+            available_models.append(model_name)
+        else:
+            logger.error(f"Model {model_name} is {status}")
+    
+    hawkiClient.models.set(list(available_models))
+    
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "completion_cache_size": len(completion_cache.cache)
+        "completion_cache_size": len(completion_cache.cache),
+        "model_check": modelCheckJson
     }
+
+async def health_check_model(model: str):
+    """
+    Health check for a specific model
+    """
+
+    request = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": HEALTH_CHECK_PROMPT}
+        ]
+    }
+
+    result = {}
+
+    # Record both a human-readable timestamp and a precise start time for runtime measurement
+    request_start_time = datetime.now()
+    start_epoch = time.time()
+    response = await process_chat_request(request, f"Bearer {ALLOWED_KEYS[0]}")
+    # process_chat_request returns a FastAPI JSONResponse; extract JSON body and headers
+    response_body = json.loads(response.body.decode())
+    result["started_at"] = request_start_time.isoformat()
+    # Measure runtime based on epoch seconds captured before the request
+    result["runtime_in_ms"] = (time.time() - start_epoch) * 1000
+    result["prompt"] = HEALTH_CHECK_PROMPT
+    result["response"] = response_body
+    result["status"] = "available" if response.status_code == 200 else "unavailable"
+    result["cached"] = response.headers.get("X-Cache-Hit") == "true"
+
+    return result
 
 
 @app.get("/test")
@@ -283,7 +366,7 @@ async def list_models(request: Request):
 
 # Use this method to check and test the API key whether it is a proxy key or a Hawki Web UI key (for outside users)
 
-
+@cached(client_cache)
 def is_api_key_working(api_key: str) -> bool:
     """
     Check if the API key is valid by making a test request to the Hawki API, when it is not contained in the ALLOWED_KEYS list.
@@ -308,15 +391,12 @@ def is_api_key_working(api_key: str) -> bool:
         return False
 
 # Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
-
-
-@cached(client_cache)
 def setClient(api_key: str) -> Hawki2ChatModel:
-    client = Hawki2ChatModel()
+    client = hawkiClient
     if api_key in ALLOWED_KEYS:  # Use primary shared API key
         return client
     # Check if user provided API key (for Hawki Web UI) is valid
-    elif api_key and is_api_key_working(api_key):
+    elif api_key and is_api_key_working(api_key): # TODO: Restrict further, especially secondary key usage 
         client.setConfig({
             "api_key": api_key
         })
@@ -342,9 +422,46 @@ def log_request(request: Request):
         f.write(f"Headers: {request.headers}\n")
         f.write(f"Client: {request.client.host}\n\n")
 
+async def run_startup_checks():
+    """
+    Run startup checks when the application starts
+    """
+    logger.info("Running startup checks...")
+
+    # Check 1: Test connection to Hawki API
+    while not await test_hawki_endpoint():
+        await asyncio.sleep(10)
+
+    # Check 2: Check usable models
+    await health()
+
+    # Further checks
+
+    logger.info("Startup checks completed.")
+
+async def test_hawki_endpoint() -> bool:
+    """
+    Test the Hawki API endpoint to ensure it is reachable.
+    """
+    try:
+        response = await process_chat_request({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Health check test. Response with 'OK' if you are operational."}]
+        }, f"Bearer {ALLOWED_KEYS[0]}")
+        status_code = response.status_code
+        if status_code == 200:
+            return True
+        else:
+            logger.error(f"Failed to connect to Hawki API. Status code: {status_code}. Retrying in 10 seconds...")
+            return False
+    except Exception as e:
+        logger.error(f"Exception while connecting to Hawki API: {e}.")
+        return False
 
 # main function
 if __name__ == "__main__":
     logger.info(f"Starting the wrapper on port {PORT}")
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
+    asyncio.run(run_startup_checks())
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))
+
