@@ -19,13 +19,15 @@ from tenacity import (
 )
 from requests.exceptions import HTTPError, Timeout
 
+from exceptions import ModelNotFoundException
+
 OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
 
 load_dotenv("./service_config/files/.env")  # Load environment variables from .env file
 load_dotenv("./config/models.env")
 logger = logging.getLogger(__name__)
 
-supported_models: list[str] = config("MODELS", default="").split(",")
+initial_models: list[str] = config("MODELS", default="").split(",")
 
 
 class RateLimitedOpenAI(ChatOpenAI):
@@ -105,13 +107,19 @@ class Models:
 
     def __init__(self):
         # Load from JSON
-        self.models = supported_models
+        self.models = initial_models
 
     def list(self) -> List[str]:
         """
         List all available models.
         """
         return list(self.models)
+    
+    def list_initial(self) -> List[str]:
+        """
+        List initial models.
+        """
+        return list(initial_models)
     
     def set(self, models: List[str]):
         """
@@ -128,9 +136,9 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     max_tokens: int = 32768
     top_p: float = 1.0 # TODO: Can this be used here? Otherwise, throw away
     base_backoff: float = 10.0
-    connect_timeout: int = 360
-    read_timeout: int = 360
-    global_timeout: int = 20
+    connect_timeout: int = 20
+    read_timeout: int = 20
+    global_timeout: int = 60
     max_cooldown: int = 30
     api_url: str = Field(default=config("HAWKI_API_URL"))
     api_key: str = Field(default=config("PRIMARY_API_KEY"))
@@ -358,7 +366,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                 elif status_code == 401:
                     logger.error(f"Unauthorized (401) error with {key_type} key: {str(e)}")
                     raise RuntimeError(f"Unauthorized access with {key_type} key")
-                else: # That's not a Rate limit error, give up # Wrong model response needed, such as 4xx
+                else: # That's not a Rate limit error, give up # Wrong model response needed, such as 4xx # Usually the Hawki API needs to return a proper status code and message for inaccapable models
                     logger.error(f"Error: {str(e)}")
                     raise RuntimeError(f"Request failed with status code {status_code} and error: {str(e)}")
 
@@ -376,6 +384,10 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         """
         Set configuration parameters for the Hawki2 client.
         """
+        model:str = settings.get("model")
+        logger.error(f"Model: {model}, Available models: {self.models.list()}")
+        if model not in self.models.list(): # Validate only if a model was provided
+            raise ModelNotFoundException(f"Model '{model}' not found in available models: {self.models.list()}")
         self.model = settings.get("model", self.model)
         self.temperature = settings.get("temperature", self.temperature)
         self.max_tokens = settings.get("max_tokens", self.max_tokens)
@@ -384,11 +396,3 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         if "api_key" in settings:
             self.api_key = settings.get("api_key")
 
-    def test_passed_model(model: str) -> bool:
-        """
-        Tests if the given model is supported by Hawki2.
-        """
-        if model in supported_models:
-            return True
-        else:
-            raise ValueError(f"Model {model} is not supported by Hawki2. Supported models: {supported_models}")

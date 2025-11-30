@@ -5,6 +5,7 @@ from fastapi import responses as fastapi_responses
 from datetime import datetime
 import json
 from decouple import config
+from exceptions import ModelNotFoundException
 from logger_config import logger
 from cache import LRUCache
 from helpers import pretty_print_json
@@ -24,17 +25,16 @@ load_dotenv('./service_config/files/.env')
 
 ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default="").split(",")
 PORT = config('PORT', default=8000)
-LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
-HAWKI_API_URL = config(
-    'HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
+HAWKI_API_URL = config('HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
 HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
 
-logger.warning(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
-logger.warning(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
-logger.warning(f"HAWKI_API_URL: {HAWKI_API_URL}")
+logger.debug(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
+logger.debug(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
+logger.info(f"HAWKI_API_URL: {HAWKI_API_URL}")
 app = FastAPI(docs_url="/swagger-ui", redoc_url=None)
 hawkiClient: Hawki2ChatModel = Hawki2ChatModel()
 
+LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
 client_cache = TTLCache(maxsize=100, ttl=600)  # 10 minutes TTL
 
@@ -98,8 +98,7 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
     stream: bool = body.get("stream", False)
 
     # Log the request details
-    logger.info(
-        f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}, Temperature: {temperature}, Max Tokens: {max_tokens}, Top P: {top_p}, Stream: {stream}")
+    logger.info(f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}, Temperature: {temperature}, Max Tokens: {max_tokens}, Top P: {top_p}, Stream: {stream}")
     logger.info(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
@@ -125,13 +124,21 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
         )
 
     # Set up the client
-    client.setConfig({
-        "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "top_p": top_p
-    })
-
+    try:
+        client.setConfig({
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p
+        })
+    except ModelNotFoundException as e:
+        logger.error(f"Model not found: {str(e)}")
+        return fastapi_responses.JSONResponse(
+            content={"error": str(e)},
+            status_code=400
+        )
+    
+    logger.info("After set client config")
     if stream:
         async def stream_response():
             for chunk in client.stream(messages, {"stream": stream}):
@@ -188,7 +195,7 @@ async def health():
     }
     
     # Run model tests
-    for model in hawkiClient.models.list():
+    for model in hawkiClient.models.list_initial():
 
         # First attempt
         result1 = await health_check_model(model)
@@ -200,6 +207,20 @@ async def health():
 
         modelCheckJson["models"][f"{model}"] = {}
         modelCheckJson["models"][f"{model}"]["requests"] = [result1, result2]
+
+
+    # Update available models in hawkiClient
+    available_models = []
+    for model_name, model_info in modelCheckJson["models"].items():
+        details = model_info["requests"][0]
+        status = details.get("status")
+        if status == "available":
+            logger.info(f"Model {model_name} is {status}")
+            available_models.append(model_name)
+        else:
+            logger.error(f"Model {model_name} is {status}")
+    
+    hawkiClient.models.set(list(available_models))
     
     return {
         "status": "healthy",
@@ -234,7 +255,7 @@ async def health_check_model(model: str):
     result["prompt"] = HEALTH_CHECK_PROMPT
     result["response"] = response_body
     result["status"] = "available" if response.status_code == 200 else "unavailable"
-    result["cached"] = response.headers.get("X-Cache-Hit", "false") == "true"
+    result["cached"] = response.headers.get("X-Cache-Hit") == "true"
 
     return result
 
@@ -342,7 +363,7 @@ async def list_models(request: Request):
 
 # Use this method to check and test the API key whether it is a proxy key or a Hawki Web UI key (for outside users)
 
-
+@cached(client_cache)
 def is_api_key_working(api_key: str) -> bool:
     """
     Check if the API key is valid by making a test request to the Hawki API, when it is not contained in the ALLOWED_KEYS list.
@@ -367,15 +388,12 @@ def is_api_key_working(api_key: str) -> bool:
         return False
 
 # Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
-
-
-@cached(client_cache)
 def setClient(api_key: str) -> Hawki2ChatModel:
-    client = Hawki2ChatModel()
+    client = hawkiClient
     if api_key in ALLOWED_KEYS:  # Use primary shared API key
         return client
     # Check if user provided API key (for Hawki Web UI) is valid
-    elif api_key and is_api_key_working(api_key):
+    elif api_key and is_api_key_working(api_key): # TODO: Restrict further, especially secondary key usage 
         client.setConfig({
             "api_key": api_key
         })
@@ -412,20 +430,9 @@ async def run_startup_checks():
         await asyncio.sleep(10)
 
     # Check 2: Check usable models
-    health_check = await health()
-    available_models = []
-    for model_name, model_info in health_check["model_check"]["models"].items():
+    await health()
 
-        details = model_info["requests"][0]
-        status = details.get("status")
-
-        if status == "available":
-            logger.info(f"Model {model_name} is {status}")
-            available_models.append(model_name)
-        else:
-            logger.error(f"Model {model_name} is {status}")
-
-    hawkiClient.models.set(available_models)
+    # Further checks
 
     logger.info("Startup checks completed.")
 
