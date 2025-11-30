@@ -55,7 +55,8 @@ async def root():
             "/v1/models": "List available models"
         },
         "documentation": "/docs",
-        "status": "operational"
+        "status": "operational",
+        "available_models": hawkiClient.models.list()
     }
 
 
