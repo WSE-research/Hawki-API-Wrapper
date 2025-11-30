@@ -57,6 +57,19 @@ python wrapper.py
 
 After that, you can access the application at http://localhost:8080.
 
+=== Build and run with Docker
+
+==== Build
+
+From within the repository, execute `docker build . -t YOUR_IMAGE_NAME`. As you need to set the environment variables here, too. Either set it in the .env file before building, as described before, or set them as `ENV ALLOWED_KEYS=....` in the Dockerfile, see comments there. A third option is to pass them as environemnt variables when running the container.
+
+==== Running
+`docker run YOUR_IMAGE_NAME` and optional ` -e ALLOWED_KEYS=.. ` when you want to pass the env vars here.
+
+
+
+====
+
 ==== Exemplary request
 
 The request format follows the OpenAI standard, i.e.:
