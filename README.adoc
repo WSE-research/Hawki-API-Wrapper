@@ -27,6 +27,15 @@ toc::[]
 
 ==== Install dependencies
 
+===== Create a venv environment and run it
+To seperate the libraries and their versions from your global pip/python installation, you can use environments that you can tailor for each project. 
+
+To create one: `python -m venv myfirstproject`
+
+To enter it: `source myfirstproject/bin/activate`
+
+For further questions, see https://www.w3schools.com/python/python_virtualenv.asp
+
 ===== Install Python dependencies
 
 [source, bash]
@@ -68,9 +77,7 @@ From within the repository, execute `docker build . -t YOUR_IMAGE_NAME`. As you 
 
 
 
-====
-
-==== Exemplary request
+=== Exemplary request
 
 The request format follows the OpenAI standard, i.e.:
 
