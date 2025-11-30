@@ -92,6 +92,9 @@ The request format follows the OpenAI standard, i.e.:
 }
 ```
 
+=== Trouble-shooting (Cooldowns)
+If you face long waiting times for responses, that may be due to the settings of `global_timeout` in ln 141 in HawkiLLM.py. Change that according to your needs. The same applies for cases when responses may take longer due to large prompts. Experiment with it.
+
 == Contribute
 
 We are happy to receive your contributions. 
