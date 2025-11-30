@@ -26,7 +26,7 @@ ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default="").split(",")
 PORT = config('PORT', default=8000)
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 HAWKI_API_URL = config(
-    'HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de')
+    'HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
 HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
 
 logger.warning(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
@@ -406,26 +406,46 @@ async def run_startup_checks():
     """
     logger.info("Running startup checks...")
 
-    # Example check: Verify connection to Hawki API
-    status_code = None
-    while not status_code == 200: 
-        # request test endpoint until success
-        try:
-            response = await process_chat_request({
-                "model": "gpt-4o",
-                "messages": [{"role": "user", "content": "Health check test. Response with 'OK' if you are operational."}]
-            }, f"Bearer {ALLOWED_KEYS[0]}")
-            status_code = response.status_code
-            if status_code == 200:
-                logger.info("Successfully connected to Hawki API.")
-            else:
-                logger.error(f"Failed to connect to Hawki API. Status code: {status_code}. Retrying in 10 seconds...")
-                time.sleep(10)
-        except Exception as e:
-            logger.error(f"Exception while connecting to Hawki API: {e}.")
-            time.sleep(10)
+    # Check 1: Test connection to Hawki API
+    while not await test_hawki_endpoint():
+        await asyncio.sleep(10)
+
+    # Check 2: Check usable models
+    health_check = await health()
+    available_models = []
+    for model_name, model_info in health_check["model_check"]["models"].items():
+
+        details = model_info["requests"][0]
+        status = details.get("status")
+
+        if status == "available":
+            logger.info(f"Model {model_name} is {status}")
+            available_models.append(model_name)
+        else:
+            logger.error(f"Model {model_name} is {status}")
+
+    hawkiClient.models.set(available_models)
 
     logger.info("Startup checks completed.")
+
+async def test_hawki_endpoint() -> bool:
+    """
+    Test the Hawki API endpoint to ensure it is reachable.
+    """
+    try:
+        response = await process_chat_request({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Health check test. Response with 'OK' if you are operational."}]
+        }, f"Bearer {ALLOWED_KEYS[0]}")
+        status_code = response.status_code
+        if status_code == 200:
+            return True
+        else:
+            logger.error(f"Failed to connect to Hawki API. Status code: {status_code}. Retrying in 10 seconds...")
+            return False
+    except Exception as e:
+        logger.error(f"Exception while connecting to Hawki API: {e}.")
+        return False
 
 # main function
 if __name__ == "__main__":
@@ -433,4 +453,4 @@ if __name__ == "__main__":
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
     asyncio.run(run_startup_checks())
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))
-    
+

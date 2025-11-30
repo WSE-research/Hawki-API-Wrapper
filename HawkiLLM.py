@@ -112,6 +112,12 @@ class Models:
         List all available models.
         """
         return list(self.models)
+    
+    def set(self, models: List[str]):
+        """
+        Set the available models.
+        """
+        self.models = models
 
 class Hawki2ChatModel(BaseChatModel, BaseModel):
     """
