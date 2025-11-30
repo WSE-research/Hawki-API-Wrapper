@@ -124,8 +124,8 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
     base_backoff: float = 10.0
     connect_timeout: int = 360
     read_timeout: int = 360
-    global_timeout: int = 360
-    max_cooldown: int = 360
+    global_timeout: int = 20
+    max_cooldown: int = 30
     api_url: str = Field(default=config("HAWKI_API_URL"))
     api_key: str = Field(default=config("PRIMARY_API_KEY"))
     secondary_api_key: str = Field(default=config("SECONDARY_API_KEY"))
@@ -352,12 +352,9 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                 elif status_code == 401:
                     logger.error(f"Unauthorized (401) error with {key_type} key: {str(e)}")
                     raise RuntimeError(f"Unauthorized access with {key_type} key")
-                else:
-                    logger.error(f"Hawki2 API request failed with {key_type} key: {str(e)}")
-                    # Set cooldown for this key and try the other
-                    backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
-                    logger.warning(f"{key_type} key backing off for {backoff}s ({backoff/3600:.1f}h) due to request error - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
-                    continue
+                else: # That's not a Rate limit error, give up # Wrong model response needed, such as 4xx
+                    logger.error(f"Error: {str(e)}")
+                    raise RuntimeError(f"Request failed with status code {status_code} and error: {str(e)}")
 
         # This should never be reached due to the infinite loop, but just in case
         raise RuntimeError(f"Unexpected exit from retry loop after {attempt} attempts")

@@ -26,6 +26,7 @@ PORT = config('PORT', default=8000)
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 HAWKI_API_URL = config(
     'HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de')
+HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
 
 logger.warning(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
 logger.warning(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
@@ -66,7 +67,8 @@ async def chat_completions(request: Request):
 
 
 async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None):
-    """Process a chat request given a plain dict `body` and `auth_header` string.
+    """
+    Process a chat request given a plain dict `body` and `auth_header` string.
     If `request_obj` is provided, it will be used for logging.
     Returns a FastAPI `JSONResponse`.
     """
@@ -140,15 +142,15 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
     # Can be deleted with custom stream implementation
         # TODO: Handle caching for streaming -> completion_cache.put(cache_key, response) -> Get full response
     else:
-        response: BaseMessage = client.invoke(messages)
+        try:
+            response: BaseMessage = client.invoke(messages)
+        except Exception as e:
+            logger.error(f"Error: {str(e)}")
 
-        # json_response = json.loads(response.model_dump_json())
-
-        # log pretty print JSON response
-        # logger.warning(
-        #    f"Response: {pretty_print_json(json_response)}")
-
-        # add the result to the cache
+            return fastapi_responses.JSONResponse(
+                content={"error": "Request error"},
+                status_code=500
+            )
 
         # log the response
         logger.info(f"Response completion: {pformat(response.model_dump(), indent=4)}")
@@ -178,8 +180,6 @@ async def health():
     """
     Health check endpoint
     """
-    
-    HEALTH_CHECK_PROMPT = "Health check test."
     AUTH = f"Bearer {ALLOWED_KEYS[0]}"
     modelCheckJson = {
         "models": {}
@@ -188,57 +188,16 @@ async def health():
     # Run model tests
     for model in hawkiClient.models.list():
 
-        request = {
-            "model": model,
-            "messages": [
-                {"role": "user", "content": HEALTH_CHECK_PROMPT}
-            ]
-        }
-
         # First attempt
-        try:
-            request1 = {}
-            current_time = time.time()
-            response = await process_chat_request(request, AUTH)
-            runtime_in_ms = (time.time() - current_time) * 1000
-            request1["status"] = "available"
-            request1["prompt"] = HEALTH_CHECK_PROMPT
-            request1["response"] = response["content"]
-            request1["started_at"] = current_time
-            request1["runtime_in_ms"] = runtime_in_ms
-            request1["cached"] = response.headers.get("X-Cache-Hit") == "true"
-        except Exception as e:
-            request1["status"] = "unavailable"
-            request1["prompt"] = HEALTH_CHECK_PROMPT
-            request1["response"] = str(e)
-            request1["started_at"] = current_time
-            request1["runtime_in_ms"] = None
-            request1["cached"] = False
+        result1 = await health_check_model(model)
 
         # Second attempt
-        try:
-            request2 = {}
-            current_time = time.time()  
-            response = await chat_completions(request)
-            runtime_in_ms = (time.time() - current_time) * 1000
-            request2["status"] = "available"
-            request2["prompt"] = HEALTH_CHECK_PROMPT
-            request2["response"] = response["content"]
-            request2["started_at"] = current_time
-            request2["runtime_in_ms"] = runtime_in_ms
-            request2["cached"] = response.headers.get("X-Cache-Hit") == "true"
-        except Exception as e:
-            request2["status"] = "unavailable"
-            request2["prompt"] = HEALTH_CHECK_PROMPT
-            request2["response"] = str(e)
-            request2["started_at"] = current_time
-            request2["runtime_in_ms"] = None
-            request2["cached"] = False
+        result2 = await health_check_model(model)
             
         # Add model entry if not exists
 
         modelCheckJson["models"][f"{model}"] = {}
-        modelCheckJson["models"][f"{model}"]["requests"] = [request1, request2]
+        modelCheckJson["models"][f"{model}"]["requests"] = [result1, result2]
     
     return {
         "status": "healthy",
@@ -246,6 +205,36 @@ async def health():
         "completion_cache_size": len(completion_cache.cache),
         "model_check": modelCheckJson
     }
+
+async def health_check_model(model: str):
+    """
+    Health check for a specific model
+    """
+
+    request = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": HEALTH_CHECK_PROMPT}
+        ]
+    }
+
+    result = {}
+
+    # Record both a human-readable timestamp and a precise start time for runtime measurement
+    request_start_time = datetime.now()
+    start_epoch = time.time()
+    response = await process_chat_request(request, f"Bearer {ALLOWED_KEYS[0]}")
+    # process_chat_request returns a FastAPI JSONResponse; extract JSON body and headers
+    response_body = json.loads(response.body.decode())
+    result["started_at"] = request_start_time.isoformat()
+    # Measure runtime based on epoch seconds captured before the request
+    result["runtime_in_ms"] = (time.time() - start_epoch) * 1000
+    result["prompt"] = HEALTH_CHECK_PROMPT
+    result["response"] = response_body
+    result["status"] = "available" if response.status_code == 200 else "unavailable"
+    result["cached"] = response.headers.get("X-Cache-Hit", "false") == "true"
+
+    return result
 
 
 @app.get("/test")
