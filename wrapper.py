@@ -36,7 +36,10 @@ hawkiClient: Hawki2ChatModel = Hawki2ChatModel()
 
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
 completion_cache: LRUCache = LRUCache(capacity=LRU_CACHE_CAPACITY)
-client_cache = TTLCache(maxsize=100, ttl=600)  # 10 minutes TTL
+
+CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
+CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
+client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
 HTTP_SERVER = AsyncClient()
 
