@@ -1,6 +1,9 @@
 # Use an official Python runtime as a parent image
 FROM python:3.11-slim
 
+# ENV ALLOWED_KEYS=...
+# and so on.
+
 # Set the working directory in the container
 WORKDIR /app
 
