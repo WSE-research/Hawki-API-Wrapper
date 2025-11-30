@@ -385,9 +385,11 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         Set configuration parameters for the Hawki2 client.
         """
         model:str = settings.get("model")
-        logger.error(f"Model: {model}, Available models: {self.models.list()}")
         if model not in self.models.list(): # Validate only if a model was provided
-            raise ModelNotFoundException(f"Model '{model}' not found in available models: {self.models.list()}")
+            if model not in self.models.list_initial():
+                raise ModelNotFoundException(f"Model '{model}' not supported.")
+            else:
+                raise ModelNotFoundException(f"Model '{model}' currently not available. Send a GET-request to /health to check available models.")
         self.model = settings.get("model", self.model)
         self.temperature = settings.get("temperature", self.temperature)
         self.max_tokens = settings.get("max_tokens", self.max_tokens)
