@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import FastAPI, Request
 import uvicorn
 from fastapi import responses as fastapi_responses
@@ -399,9 +400,37 @@ def log_request(request: Request):
         f.write(f"Headers: {request.headers}\n")
         f.write(f"Client: {request.client.host}\n\n")
 
+async def run_startup_checks():
+    """
+    Run startup checks when the application starts
+    """
+    logger.info("Running startup checks...")
+
+    # Example check: Verify connection to Hawki API
+    status_code = None
+    while not status_code == 200: 
+        # request test endpoint until success
+        try:
+            response = await process_chat_request({
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "Health check test. Response with 'OK' if you are operational."}]
+            }, f"Bearer {ALLOWED_KEYS[0]}")
+            status_code = response.status_code
+            if status_code == 200:
+                logger.info("Successfully connected to Hawki API.")
+            else:
+                logger.error(f"Failed to connect to Hawki API. Status code: {status_code}. Retrying in 10 seconds...")
+                time.sleep(10)
+        except Exception as e:
+            logger.error(f"Exception while connecting to Hawki API: {e}.")
+            time.sleep(10)
+
+    logger.info("Startup checks completed.")
 
 # main function
 if __name__ == "__main__":
     logger.info(f"Starting the wrapper on port {PORT}")
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
+    asyncio.run(run_startup_checks())
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))
+    
