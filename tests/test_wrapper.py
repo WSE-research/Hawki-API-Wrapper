@@ -1,5 +1,6 @@
 import unittest
 from fastapi.testclient import TestClient
+import pytest
 from wrapper import app
 # from config import ALLOWED_KEYS
 import logging
@@ -25,6 +26,7 @@ handler.setFormatter(colorlog.ColoredFormatter(
 logger.addHandler(handler)
 logger.setLevel(logging.DEBUG)
 
+pytestmark = pytest.mark.usefixtures("configure_hawki_models")
 
 # get the ALLOWED_KEYS from the environment variable
 ALLOWED_KEYS = os.getenv("ALLOWED_KEYS").split(",")
