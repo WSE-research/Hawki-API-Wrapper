@@ -27,6 +27,15 @@ toc::[]
 
 ==== Install dependencies
 
+===== Create a venv environment and run it
+To seperate the libraries and their versions from your global pip/python installation, you can use environments that you can tailor for each project. 
+
+To create one: `python -m venv myfirstproject`
+
+To enter it: `source myfirstproject/bin/activate`
+
+For further questions, see https://www.w3schools.com/python/python_virtualenv.asp
+
 ===== Install Python dependencies
 
 [source, bash]
@@ -57,7 +66,18 @@ python wrapper.py
 
 After that, you can access the application at http://localhost:8080.
 
-==== Exemplary request
+=== Build and run with Docker
+
+==== Build
+
+From within the repository, execute `docker build . -t YOUR_IMAGE_NAME`. As you need to set the environment variables here, too. Either set it in the .env file before building, as described before, or set them as `ENV ALLOWED_KEYS=....` in the Dockerfile, see comments there. A third option is to pass them as environemnt variables when running the container.
+
+==== Running
+`docker run YOUR_IMAGE_NAME` and optional ` -e ALLOWED_KEYS=.. ` when you want to pass the env vars here.
+
+
+
+=== Exemplary request
 
 The request format follows the OpenAI standard, i.e.:
 
@@ -71,6 +91,9 @@ The request format follows the OpenAI standard, i.e.:
   ]
 }
 ```
+
+=== Trouble-shooting (Cooldowns)
+If you face long waiting times for responses, that may be due to the settings of `global_timeout` in ln 141 in HawkiLLM.py. Change that according to your needs. The same applies for cases when responses may take longer due to large prompts. Experiment with it.
 
 == Contribute
 
