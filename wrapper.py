@@ -45,7 +45,7 @@ async def root():
     """
     return {
         "name": "Hawki API Wrapper",
-        "version": "0.1.0",
+        "version": "0.5.0",
         "endpoints": {
             "/v1/chat/completions": "Chat completions endpoint",
             "/health": "Health check endpoint",
