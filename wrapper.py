@@ -71,7 +71,7 @@ async def chat_completions(request: Request):
     return await process_chat_request(body, auth_header, request)
 
 
-async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None):
+async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None, use_cache: bool = True) -> fastapi_responses.JSONResponse | StreamingResponse:
     """
     Process a chat request given a plain dict `body` and `auth_header` string.
     If `request_obj` is provided, it will be used for logging.
@@ -119,7 +119,7 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
 
     # check the input data is contained in the cache holding the last 10000 input_data results
     completion_result = completion_cache.get(cache_key)
-    if completion_result is not None:
+    if completion_result is not None and use_cache:
         logger.warning(f"Completion result found in cache for input: {messages} ({cache_key})")
         return fastapi_responses.JSONResponse(
             content=completion_result,
@@ -201,10 +201,10 @@ async def health():
     for model in hawkiClient.models.list_initial():
 
         # First attempt
-        result1 = await health_check_model(model)
+        result1 = await health_check_model(model, use_cache=False)
 
         # Second attempt
-        result2 = await health_check_model(model)
+        result2 = await health_check_model(model, use_cache=True)
             
         # Add model entry if not exists
 
@@ -232,7 +232,7 @@ async def health():
         "model_check": modelCheckJson
     }
 
-async def health_check_model(model: str):
+async def health_check_model(model: str, use_cache: bool = False) -> dict:
     """
     Health check for a specific model
     """
@@ -249,7 +249,7 @@ async def health_check_model(model: str):
     # Record both a human-readable timestamp and a precise start time for runtime measurement
     request_start_time = datetime.now()
     start_epoch = time.time()
-    response = await process_chat_request(request, f"Bearer {ALLOWED_KEYS[0]}")
+    response = await process_chat_request(request, f"Bearer {ALLOWED_KEYS[0]}", use_cache=use_cache)
     # process_chat_request returns a FastAPI JSONResponse; extract JSON body and headers
     response_body = json.loads(response.body.decode())
     result["started_at"] = request_start_time.isoformat()
@@ -429,10 +429,13 @@ async def run_startup_checks():
     logger.info("Running startup checks...")
 
     # Check 1: Test connection to Hawki API
+    logger.info("Checking connection to Hawki API...")
     while not await test_hawki_endpoint():
+        logger.warning("Hawki API is not reachable. Retrying in 10 seconds...")
         await asyncio.sleep(10)
 
     # Check 2: Check usable models
+    logger.info("Checking available models...")
     await health()
 
     # Further checks
