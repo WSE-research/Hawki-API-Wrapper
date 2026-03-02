@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from cachetools import TTLCache, cached
 from pprint import pformat
-from langchain.schema import BaseMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
 import time
 
@@ -55,6 +55,7 @@ async def root():
         "endpoints": {
             "/v1/chat/completions": "Chat completions endpoint",
             "/health": "Health check endpoint",
+            "/health/details": "Detailed model diagnostics endpoint",
             "/v1/models": "List available models"
         },
         "documentation": "/docs",
@@ -190,13 +191,24 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
 @app.get("/health")
 async def health():
     """
-    Health check endpoint
+    Lightweight health endpoint for liveness/readiness probes.
     """
-    AUTH = f"Bearer {ALLOWED_KEYS[0]}"
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "completion_cache_size": len(completion_cache.cache),
+        "initial_models": hawkiClient.models.list_initial()
+    }
+
+
+async def run_model_diagnostics() -> dict:
+    """
+    Run detailed model diagnostics and refresh available models in the client.
+    """
     modelCheckJson = {
         "models": {}
     }
-    
+
     # Run model tests
     for model in hawkiClient.models.list_initial():
 
@@ -208,9 +220,9 @@ async def health():
             
         # Add model entry if not exists
 
-        modelCheckJson["models"][f"{model}"] = {}
-        modelCheckJson["models"][f"{model}"]["requests"] = [result1, result2]
-
+        modelCheckJson["models"][f"{model}"] = {
+            "requests": [result1, result2]
+        }
 
     # Update available models in hawkiClient
     available_models = []
@@ -222,14 +234,28 @@ async def health():
             available_models.append(model_name)
         else:
             logger.error(f"Model {model_name} is {status}")
-    
+
     hawkiClient.models.set(list(available_models))
+
+    return {
+        "model_check": modelCheckJson,
+        "available_models": available_models
+    }
+
+
+@app.get("/health/details")
+async def health_details():
+    """
+    Detailed health endpoint with per-model diagnostics.
+    """
+    diagnostics = await run_model_diagnostics()
     
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "completion_cache_size": len(completion_cache.cache),
-        "model_check": modelCheckJson
+        "model_check": diagnostics["model_check"],
+        "available_models": diagnostics["available_models"]
     }
 
 async def health_check_model(model: str, use_cache: bool = False) -> dict:
@@ -436,7 +462,7 @@ async def run_startup_checks():
 
     # Check 2: Check usable models
     logger.info("Checking available models...")
-    await health()
+    await run_model_diagnostics()
 
     # Further checks
 

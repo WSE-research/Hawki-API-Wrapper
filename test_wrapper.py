@@ -54,6 +54,14 @@ class TestChatCompletions(unittest.TestCase):
         self.assertIn("timestamp", response.json())
         logger.info(f"Health response: {response.json()}")
 
+    def test_025_health_details(self):
+        logger.info(f"Testing health details endpoint")
+        response = self.client.get("/health/details")
+        self.assertEqual(response.status_code, 200)
+        ## Further assertions on json response structure
+        self.assertIn("model_check", response.json())
+        self.assertIn("available_models", response.json())
+
     # test access to models endpoint
     def test_030_models_endpoint(self):
         logger.info(f"Testing models endpoint")
