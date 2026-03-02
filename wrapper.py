@@ -1,8 +1,9 @@
 import asyncio
+from collections import deque
 from fastapi import FastAPI, Request, Header
 import uvicorn
 from fastapi import responses as fastapi_responses
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from decouple import config
 from exceptions import ModelNotFoundException
@@ -312,10 +313,11 @@ async def health_details(authorization: str | None = Header(default=None)):
     if not api_key in KEY_MODELS_USAGE:
         None;
     for model in diagnostics["models"]:
-        usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
-        diagnostics["models"][model]["usage"] = {
-            str(-index): value for index, value in enumerate(usage_per_hour)
-        }
+        if model in KEY_MODELS_USAGE[api_key]:
+            usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
+            diagnostics["models"][model]["usage"] = {
+                str(-index): value for index, value in enumerate(usage_per_hour)
+            }
 
     return {
         "status": "healthy",
@@ -544,7 +546,7 @@ async def test_hawki_endpoint() -> bool:
             "messages": [{"role": "user", "content": "Health check test. Response with 'OK' if you are operational."}]
         }, f"Bearer {ALLOWED_KEYS[0]}")
         status_code = response.status_code
-        if status_code == 200:
+        if 200 <= status_code < 300:
             return True
         else:
             logger.error(f"Failed to connect to Hawki API. Status code: {status_code}. Retrying in 10 seconds...")
