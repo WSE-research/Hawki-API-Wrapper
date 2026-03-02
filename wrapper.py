@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Header
 import uvicorn
 from fastapi import responses as fastapi_responses
 from datetime import datetime
@@ -41,8 +41,65 @@ CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
 CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
 client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
+KEY_MODELS_USAGE = dict() # model_name -> list of ModelUsage instances
+
+class ModelUsage:
+    # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self._timestamps = deque()
+
+    def add(self, dt: datetime | None = None):
+        if dt is None:
+            dt = datetime.now()
+
+        self._timestamps.append(dt)
+        self._cleanup()
+    
+    def getTimestamps(self):
+        self._cleanup()
+        return list(self._timestamps)
+
+    def getModelName(self):
+        return self.model_name
+
+    def _cleanup(self):
+        cutoff = datetime.now() - timedelta(hours=24)
+        while self._timestamps and self._timestamps[0] < cutoff:
+            self._timestamps.popleft()
+
+    def getUsagePerHour(self):
+        self._cleanup()
+        now = datetime.now()
+
+        result = []
+        total = len(self._timestamps)
+        idx = total - 1  # start from newest
+
+        # For hour = 1 to 24
+        for hours in range(1, 25):
+            cutoff = now - timedelta(hours=hours)
+
+            # Move index left while timestamps are >= cutoff
+            while idx >= 0 and self._timestamps[idx] >= cutoff:
+                idx -= 1
+
+            # total elements minus elements before cutoff
+            result.append(total - (idx + 1))
+
+        return result
+
 HTTP_SERVER = AsyncClient()
 
+def add_model_usage(api_key: str, model_name: str):
+    if api_key not in KEY_MODELS_USAGE:
+        KEY_MODELS_USAGE[api_key] = dict()
+
+    if model_name not in KEY_MODELS_USAGE[api_key]:
+        KEY_MODELS_USAGE[api_key][model_name] = ModelUsage(model_name)
+
+    KEY_MODELS_USAGE[api_key][model_name].add()
 
 @app.get("/")
 async def root():
@@ -170,6 +227,7 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
 
         # For non-cached responses, explicitly set cache header to false
         try:
+            add_model_usage(request_api_key, model)
             response_json = json.loads(response.model_dump_json())
             response_content = response_json.get("content")
             completion_cache.put(cache_key, response_content)
@@ -237,25 +295,33 @@ async def run_model_diagnostics() -> dict:
 
     hawkiClient.models.set(list(available_models))
 
-    return {
-        "model_check": modelCheckJson,
-        "available_models": available_models
-    }
-
+    return modelCheckJson
+    
 
 @app.get("/health/details")
-async def health_details():
+async def health_details(authorization: str | None = Header(default=None)):
     """
     Detailed health endpoint with per-model diagnostics.
     """
     diagnostics = await run_model_diagnostics()
     
+    # Provide model usage for api key passed
+    if not authorization:
+        None;
+    api_key = authorization.replace("Bearer ", "")
+    if not api_key in KEY_MODELS_USAGE:
+        None;
+    for model in diagnostics["models"]:
+        usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
+        diagnostics["models"][model]["usage"] = {
+            str(-index): value for index, value in enumerate(usage_per_hour)
+        }
+
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "completion_cache_size": len(completion_cache.cache),
-        "model_check": diagnostics["model_check"],
-        "available_models": diagnostics["available_models"]
+        "model_check": diagnostics["models"],
     }
 
 async def health_check_model(model: str, use_cache: bool = False) -> dict:
