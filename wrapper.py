@@ -46,6 +46,7 @@ KEY_MODELS_USAGE = dict() # model_name -> list of ModelUsage instances
 
 class ModelUsage:
     # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
+    # Care for testing: add() simply appends the timestamp to the right of the deque as no sorting is needed for this use case. Thus, the oldest timestamp is always on the left and the newest on the right.
 
     def __init__(self, model_name: str):
         self.model_name = model_name
@@ -88,6 +89,7 @@ class ModelUsage:
 
             # total elements minus elements before cutoff
             result.append(total - (idx + 1))
+            logger.info(f"Model {self.model_name} - Usage in last {hours} hour(s): {result[hours -1]}")
 
         return result
 
