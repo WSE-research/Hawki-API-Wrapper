@@ -71,7 +71,7 @@ class ModelUsage:
         while self._timestamps and self._timestamps[0] < cutoff:
             self._timestamps.popleft()
 
-    def getUsagePerHour(self):
+    def getUsagePerHour(self): # Return cumulative counts for usage of the past 24 hours in a list of length 24, where index 0 is the count for the last hour, index 1 for the last 2 hours, and so on
         self._cleanup()
         now = datetime.now()
 
@@ -182,6 +182,7 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
     completion_result = completion_cache.get(cache_key)
     if completion_result is not None and use_cache:
         logger.warning(f"Completion result found in cache for input: {messages} ({cache_key})")
+        add_model_usage(model, request_api_key)
         return fastapi_responses.JSONResponse(
             content=completion_result,
             headers={"X-Cache-Hit": "true"}
@@ -310,14 +311,14 @@ async def health_details(authorization: str | None = Header(default=None)):
     
     # Provide model usage for api key passed
     if authorization:
-        logger.info(f"Authorization header provided for health details: {authorization[:8]}...{authorization[-4:]}")
+        logger.info(f"Authorization header provided for health details")
         api_key = authorization.replace("Bearer ", "")
         if api_key in KEY_MODELS_USAGE:
             for model in diagnostics["models"]:
                 if model in KEY_MODELS_USAGE[api_key]:
                     usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
                     diagnostics["models"][model]["usage"] = {
-                        str(-index): value for index, value in enumerate(usage_per_hour)
+                        str(-(index+1)): value for index, value in enumerate(usage_per_hour)
                     }
 
     return {
@@ -482,7 +483,7 @@ def is_api_key_working(api_key: str) -> bool:
         return True
     except Exception as e:
         logger.error(
-            f"API key test failed for key: {api_key[:8]}...{api_key[-4:]} with error: {e}")
+            f"API key test failed for key: {api_key[:4]}...{api_key[-2:]} with error: {e}")
         return False
 
 # Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
