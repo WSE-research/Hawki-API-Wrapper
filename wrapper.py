@@ -307,17 +307,16 @@ async def health_details(authorization: str | None = Header(default=None)):
     diagnostics = await run_model_diagnostics()
     
     # Provide model usage for api key passed
-    if not authorization:
-        None;
-    api_key = authorization.replace("Bearer ", "")
-    if not api_key in KEY_MODELS_USAGE:
-        None;
-    for model in diagnostics["models"]:
-        if model in KEY_MODELS_USAGE[api_key]:
-            usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
-            diagnostics["models"][model]["usage"] = {
-                str(-index): value for index, value in enumerate(usage_per_hour)
-            }
+    if authorization:
+        logger.info(f"Authorization header provided for health details: {authorization[:8]}...{authorization[-4:]}")
+        api_key = authorization.replace("Bearer ", "")
+        if api_key in KEY_MODELS_USAGE:
+            for model in diagnostics["models"]:
+                if model in KEY_MODELS_USAGE[api_key]:
+                    usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
+                    diagnostics["models"][model]["usage"] = {
+                        str(-index): value for index, value in enumerate(usage_per_hour)
+                    }
 
     return {
         "status": "healthy",
