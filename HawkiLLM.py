@@ -323,6 +323,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         self.temperature = settings.get("temperature", self.temperature)
         self.max_tokens = settings.get("max_tokens", self.max_tokens)
         self.top_p = settings.get("top_p", self.top_p)
-        self.global_timeout = settings.get("timeout", self.global_timeout)
+        timeout = settings.get("timeout")
+        self.global_timeout = timeout if timeout is not None else self.global_timeout
         if "api_key" in settings:
             self.api_key = settings.get("api_key")

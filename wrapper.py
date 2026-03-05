@@ -129,7 +129,7 @@ async def chat_completions(request: Request):
     return await process_chat_request(body, header, request)
 
 
-async def process_chat_request(body: dict, header: str | None, request_obj: Request | None = None, use_cache: bool = True) -> fastapi_responses.JSONResponse | StreamingResponse:
+async def process_chat_request(body: dict, header: dict | None, request_obj: Request | None = None, use_cache: bool = True) -> fastapi_responses.JSONResponse | StreamingResponse:
     """
     Process a chat request given a plain dict `body` and `auth_header` string.
     If `request_obj` is provided, it will be used for logging.
@@ -364,7 +364,7 @@ async def health_check_model(model: str, use_cache: bool = False) -> dict:
     # Record both a human-readable timestamp and a precise start time for runtime measurement
     request_start_time = datetime.now()
     start_epoch = time.time()
-    response = await process_chat_request(request, f"Bearer {ALLOWED_KEYS[0]}", use_cache=use_cache)
+    response = await process_chat_request(request, {"Authorization": f"Bearer {ALLOWED_KEYS[0]}"}, use_cache=use_cache)
     # process_chat_request returns a FastAPI JSONResponse; extract JSON body and headers
     response_body = json.loads(response.body.decode())
     result["started_at"] = request_start_time.isoformat()
@@ -565,7 +565,7 @@ async def test_hawki_endpoint() -> bool:
         response = await process_chat_request({
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Health check test. Response with 'OK' if you are operational."}]
-        }, f"Bearer {ALLOWED_KEYS[0]}")
+        }, {"Authorization": f"Bearer {ALLOWED_KEYS[0]}"})
         status_code = response.status_code
         if 200 <= status_code < 300:
             return True
