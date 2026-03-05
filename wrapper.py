@@ -6,7 +6,7 @@ from fastapi import responses as fastapi_responses
 from datetime import datetime, timedelta
 import json
 from decouple import config
-from exceptions import ModelNotFoundException
+from exceptions import ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
 from logger_config import logger
 from cache import LRUCache
 from helpers import pretty_print_json
@@ -125,11 +125,11 @@ async def root():
 async def chat_completions(request: Request):
     """FastAPI endpoint wrapper: parse request and delegate to core processor."""
     body = await request.json()
-    auth_header = request.headers.get("Authorization")
-    return await process_chat_request(body, auth_header, request)
+    header = request.headers
+    return await process_chat_request(body, header, request)
 
 
-async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None, use_cache: bool = True) -> fastapi_responses.JSONResponse | StreamingResponse:
+async def process_chat_request(body: dict, header: str | None, request_obj: Request | None = None, use_cache: bool = True) -> fastapi_responses.JSONResponse | StreamingResponse:
     """
     Process a chat request given a plain dict `body` and `auth_header` string.
     If `request_obj` is provided, it will be used for logging.
@@ -147,20 +147,18 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
 
     # extract API key from header
     request_api_key = None
+    auth_header = header.get("Authorization") if header else None
     if auth_header:
         request_api_key = auth_header.replace("Bearer ", "")
 
     model = body.get("model")
     raw_messages = body.get("messages", [])
     messages = convert_to_messages(raw_messages)
-    temperature = body.get("temperature", None)
-    max_tokens = body.get("max_tokens", None)
-    top_p = body.get("top_p", None)
     stream: bool = body.get("stream", False)
 
     # Log the request details
-    logger.info(f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}, Temperature: {temperature}, Max Tokens: {max_tokens}, Top P: {top_p}, Stream: {stream}")
-    logger.info(f"Messages: {messages}")
+    logger.info(f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}")
+    logger.debug(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
     cache_key = f"{datetime.now().year}-{datetime.now().isocalendar()[1]}-{json.dumps(body, sort_keys=True)}"
@@ -189,37 +187,55 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
     try:
         client.setConfig({
             "model": model,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "top_p": top_p
+            "temperature": body.get("temperature", None),
+            "max_tokens": body.get("max_tokens", None),
+            "top_p": body.get("top_p", None),
+            "timeout": header.get("X-Hawki-Request-Timeout")
         })
     except ModelNotFoundException as e:
-        logger.error(f"Model not found: {str(e)}")
+        logger.error(f"{str(e)}")
         return fastapi_responses.JSONResponse(
-            content={"error": str(e)},
-            status_code=400
+            content = {"error": str(e)},
+            status_code = e.status_code
         )
     
-    logger.info("After set client config")
+#    if stream:
+#        async def stream_response():
+#            for chunk in client.stream(messages, {"stream": stream}):
+#                content = chunk.text() or ""
+#                yield content.encode("utf-8")
+#                logger.info(f"Streaming chunk: {content}")
+
+#        return StreamingResponse(stream_response(), media_type="text/plain")
+
     if stream:
-        async def stream_response():
-            for chunk in client.stream(messages, {"stream": stream}):
-                content = chunk.text() or ""
-                yield content.encode("utf-8")
-                logger.info(f"Streaming chunk: {content}")
+        None # Streaming is not yet supported by Hawki.
 
-        return StreamingResponse(stream_response(), media_type="text/plain")
-
-    # Can be deleted with custom stream implementation
-        # TODO: Handle caching for streaming -> completion_cache.put(cache_key, response) -> Get full response
     else:
         try:
             response: BaseMessage = client.invoke(messages)
-        except Exception as e:
-            logger.error(f"Error: {str(e)}")
-
+        except (GlobalTimeoutError, CooldownTimeoutError) as e:
+            logger.error(f"Timeout: {e}")
             return fastapi_responses.JSONResponse(
-                content={"error": "Request error"},
+                content={"error": "Request timed out", "detail": str(e)},
+                status_code=504
+            )
+        except UnauthorizedError as e:
+            logger.error(f"Unauthorized: {e}")
+            return fastapi_responses.JSONResponse(
+                content={"error": "Unauthorized", "detail": str(e)},
+                status_code = e.status_code or 401
+            )
+        except RequestFailedError as e:
+            logger.error(f"Request failed: {e}")
+            return fastapi_responses.JSONResponse(
+                content={"error": "Upstream request failed", "detail": str(e)},
+                status_code=e.status_code or 502
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            return fastapi_responses.JSONResponse(
+                content={"error": "Internal server error"},
                 status_code=500
             )
 
@@ -230,9 +246,15 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
         try:
             add_model_usage(request_api_key, model)
             response_json = json.loads(response.model_dump_json())
+            if not response_json or not response_json.get("content"):
+                logger.error(f"Invalid response, empty.")
+                return fastapi_responses.JSONResponse(
+                    content={"error": "Invalid (empty) response from Hawki API. Retry or try another model."},
+                    status_code=522
+                )
             response_content = response_json.get("content")
             completion_cache.put(cache_key, response_content)
-            logger.info(f"Response added to cache: {cache_key}")
+            logger.debug(f"Response added to cache: {cache_key}")
             return fastapi_responses.JSONResponse(
                 content=response_content,
                 headers={"X-Cache-Hit": "false"},

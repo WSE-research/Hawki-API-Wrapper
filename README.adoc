@@ -52,7 +52,6 @@ In the `.env-file`, there are several vars that need to be configured.
 ```.env
 ALLOWED_KEYS=ALLOWED_KEYS # These are the proxy keys to use for auth to the API, choose yourself
 PRIMARY_API_KEY=PRIMARY_API_KEY # That's your Hawki Web UI key
-SECONDARY_API_KEY=SECONDARY_API_KEY # That's a fallback alternative, if you have only one Hawki Web UI key, insert your Primary Key here, again
 PORT=8080 # adjust as you like, not necessary
 HAWKI_API_URL=HAWKI_API_URL # the Hawki Web UI endpoint, defaults to https://hawki2.htwk-leipzig.de/api/ai-req
 ```
@@ -90,6 +89,27 @@ The request format follows the OpenAI standard, i.e.:
     {"role":"user","content":"Whats up?"}
   ]
 }
+```
+
+=== Authentication
+
+The `Authorization` header accepts two types of keys:
+
+* **Proxy key** – one of the keys configured in `ALLOWED_KEYS` in the `.env` file. This is the normal case for trusted clients that share a single upstream Hawki key managed by the wrapper operator.
+* **Hawki Web UI key** – your personal Hawki Web UI key. If you already have direct access to the Hawki instance, you can pass your own key and the wrapper will forward requests under that key without any additional setup in the env file.
+
+```
+Authorization: Bearer <your-proxy-key-or-hawki-web-ui-key>
+```
+
+=== Controlling the request timeout
+
+By default the wrapper enforces a `global_timeout` of 60 seconds per request (configurable in `service_config/files/.env`).
+This timeout is used to work around the rate limit and retry requests until the configured timeout is exceeded. 
+You can override this on a per-request basis by setting the `X-Hawki-Request-Timeout` header to the desired timeout in seconds.
+
+```
+X-Hawki-Request-Timeout: 120
 ```
 
 == Models
