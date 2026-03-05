@@ -1,8 +1,9 @@
 import asyncio
-from fastapi import FastAPI, Request
+from collections import deque
+from fastapi import FastAPI, Request, Header
 import uvicorn
 from fastapi import responses as fastapi_responses
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from decouple import config
 from exceptions import ModelNotFoundException
@@ -17,7 +18,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from cachetools import TTLCache, cached
 from pprint import pformat
-from langchain.schema import BaseMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.messages.utils import convert_to_messages
 import time
 
@@ -41,8 +42,64 @@ CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
 CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
 client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
+KEY_MODELS_USAGE = dict() # api_key -> list of ModelUsage instances
+
+class ModelUsage:
+    # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
+    # Care for testing: add() simply appends the timestamp to the right of the deque as no sorting is needed for this use case. Thus, the oldest timestamp is always on the left and the newest on the right.
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self._timestamps = deque()
+
+    def add(self, dt: datetime | None = None):
+        if dt is None:
+            dt = datetime.now()
+        self._timestamps.append(dt)
+        self._cleanup()
+    
+    def getTimestamps(self):
+        self._cleanup()
+        return list(self._timestamps)
+
+    def getModelName(self):
+        return self.model_name
+
+    def _cleanup(self):
+        cutoff = datetime.now() - timedelta(hours=24)
+        while self._timestamps and self._timestamps[0] < cutoff:
+            self._timestamps.popleft()
+
+    def getUsagePerHour(self): # Return cumulative counts for usage of the past 24 hours in a list of length 24, where index 0 is the count for the last hour, index 1 for the last 2 hours, and so on
+        self._cleanup()
+        now = datetime.now()
+
+        result = []
+        total = len(self._timestamps)
+        idx = total - 1  # start from newest
+
+        # For hour = 1 to 24
+        for hours in range(1, 25):
+            cutoff = now - timedelta(hours=hours)
+
+            # Move index left while timestamps are >= cutoff
+            while idx >= 0 and self._timestamps[idx] >= cutoff:
+                idx -= 1
+
+            # total elements minus elements before cutoff
+            result.append(total - (idx + 1))
+            logger.debug(f"Model {self.model_name} - Usage in last {hours} hour(s): {result[hours -1]}")
+
+        return result
+
 HTTP_SERVER = AsyncClient()
 
+def add_model_usage(api_key: str, model_name: str):
+    if api_key not in KEY_MODELS_USAGE:
+        KEY_MODELS_USAGE[api_key] = dict()
+    if model_name not in KEY_MODELS_USAGE[api_key]:
+        KEY_MODELS_USAGE[api_key][model_name] = ModelUsage(model_name)
+    KEY_MODELS_USAGE[api_key][model_name].add()
 
 @app.get("/")
 async def root():
@@ -55,6 +112,7 @@ async def root():
         "endpoints": {
             "/v1/chat/completions": "Chat completions endpoint",
             "/health": "Health check endpoint",
+            "/health/details": "Detailed model diagnostics endpoint",
             "/v1/models": "List available models"
         },
         "documentation": "/docs",
@@ -71,7 +129,7 @@ async def chat_completions(request: Request):
     return await process_chat_request(body, auth_header, request)
 
 
-async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None):
+async def process_chat_request(body: dict, auth_header: str | None, request_obj: Request | None = None, use_cache: bool = True) -> fastapi_responses.JSONResponse | StreamingResponse:
     """
     Process a chat request given a plain dict `body` and `auth_header` string.
     If `request_obj` is provided, it will be used for logging.
@@ -119,8 +177,9 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
 
     # check the input data is contained in the cache holding the last 10000 input_data results
     completion_result = completion_cache.get(cache_key)
-    if completion_result is not None:
+    if completion_result is not None and use_cache:
         logger.warning(f"Completion result found in cache for input: {messages} ({cache_key})")
+        add_model_usage(request_api_key, model)
         return fastapi_responses.JSONResponse(
             content=completion_result,
             headers={"X-Cache-Hit": "true"}
@@ -169,6 +228,7 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
 
         # For non-cached responses, explicitly set cache header to false
         try:
+            add_model_usage(request_api_key, model)
             response_json = json.loads(response.model_dump_json())
             response_content = response_json.get("content")
             completion_cache.put(cache_key, response_content)
@@ -190,27 +250,38 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
 @app.get("/health")
 async def health():
     """
-    Health check endpoint
+    Lightweight health endpoint for liveness/readiness probes.
     """
-    AUTH = f"Bearer {ALLOWED_KEYS[0]}"
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "completion_cache_size": len(completion_cache.cache),
+        "initial_models": hawkiClient.models.list_initial()
+    }
+
+
+async def run_model_diagnostics() -> dict:
+    """
+    Run detailed model diagnostics and refresh available models in the client.
+    """
     modelCheckJson = {
         "models": {}
     }
-    
+
     # Run model tests
     for model in hawkiClient.models.list_initial():
 
         # First attempt
-        result1 = await health_check_model(model)
+        result1 = await health_check_model(model, use_cache=False)
 
         # Second attempt
-        result2 = await health_check_model(model)
+        result2 = await health_check_model(model, use_cache=True)
             
         # Add model entry if not exists
 
-        modelCheckJson["models"][f"{model}"] = {}
-        modelCheckJson["models"][f"{model}"]["requests"] = [result1, result2]
-
+        modelCheckJson["models"][f"{model}"] = {
+            "requests": [result1, result2]
+        }
 
     # Update available models in hawkiClient
     available_models = []
@@ -222,17 +293,39 @@ async def health():
             available_models.append(model_name)
         else:
             logger.error(f"Model {model_name} is {status}")
-    
+
     hawkiClient.models.set(list(available_models))
+
+    return modelCheckJson
     
+
+@app.get("/health/details")
+async def health_details(authorization: str | None = Header(default=None)):
+    """
+    Detailed health endpoint with per-model diagnostics.
+    """
+    diagnostics = await run_model_diagnostics()
+    
+    # Provide model usage for api key passed
+    if authorization:
+        logger.info(f"Authorization header provided for health details")
+        api_key = authorization.replace("Bearer ", "")
+        if api_key in KEY_MODELS_USAGE:
+            for model in diagnostics["models"]:
+                if model in KEY_MODELS_USAGE[api_key]:
+                    usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
+                    diagnostics["models"][model]["usage"] = {
+                        str(-(index+1)): value for index, value in enumerate(usage_per_hour)
+                    }
+
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "completion_cache_size": len(completion_cache.cache),
-        "model_check": modelCheckJson
+        "model_check": diagnostics["models"],
     }
 
-async def health_check_model(model: str):
+async def health_check_model(model: str, use_cache: bool = False) -> dict:
     """
     Health check for a specific model
     """
@@ -249,7 +342,7 @@ async def health_check_model(model: str):
     # Record both a human-readable timestamp and a precise start time for runtime measurement
     request_start_time = datetime.now()
     start_epoch = time.time()
-    response = await process_chat_request(request, f"Bearer {ALLOWED_KEYS[0]}")
+    response = await process_chat_request(request, f"Bearer {ALLOWED_KEYS[0]}", use_cache=use_cache)
     # process_chat_request returns a FastAPI JSONResponse; extract JSON body and headers
     response_body = json.loads(response.body.decode())
     result["started_at"] = request_start_time.isoformat()
@@ -387,7 +480,7 @@ def is_api_key_working(api_key: str) -> bool:
         return True
     except Exception as e:
         logger.error(
-            f"API key test failed for key: {api_key[:8]}...{api_key[-4:]} with error: {e}")
+            f"API key test failed for key: {api_key[:4]}...{api_key[-2:]} with error: {e}")
         return False
 
 # Maybe cache the clients for each API key to avoid re-creating them each time; set low deletion timer
@@ -429,11 +522,14 @@ async def run_startup_checks():
     logger.info("Running startup checks...")
 
     # Check 1: Test connection to Hawki API
+    logger.info("Checking connection to Hawki API...")
     while not await test_hawki_endpoint():
+        logger.warning("Hawki API is not reachable. Retrying in 10 seconds...")
         await asyncio.sleep(10)
 
     # Check 2: Check usable models
-    await health()
+    logger.info("Checking available models...")
+    await run_model_diagnostics()
 
     # Further checks
 
@@ -449,7 +545,7 @@ async def test_hawki_endpoint() -> bool:
             "messages": [{"role": "user", "content": "Health check test. Response with 'OK' if you are operational."}]
         }, f"Bearer {ALLOWED_KEYS[0]}")
         status_code = response.status_code
-        if status_code == 200:
+        if 200 <= status_code < 300:
             return True
         else:
             logger.error(f"Failed to connect to Hawki API. Status code: {status_code}. Retrying in 10 seconds...")

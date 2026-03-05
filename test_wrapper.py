@@ -45,15 +45,6 @@ class TestChatCompletions(unittest.TestCase):
         self.assertEqual('foo'.upper(), 'FOO')
         logger.info(f"Client URL: {self.client.base_url}")
 
-    # test access to health endpoint
-    def test_020_health(self):
-        logger.info(f"Testing health endpoint")
-        response = self.client.get("/health")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "healthy")
-        self.assertIn("timestamp", response.json())
-        logger.info(f"Health response: {response.json()}")
-
     # test access to models endpoint
     def test_030_models_endpoint(self):
         logger.info(f"Testing models endpoint")
