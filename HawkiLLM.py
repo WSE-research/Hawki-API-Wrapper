@@ -19,7 +19,7 @@ from tenacity import (
 )
 from requests.exceptions import HTTPError, Timeout
 
-from exceptions import ModelNotFoundException
+from exceptions import ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
 
 OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
 
@@ -129,34 +129,28 @@ class Models:
 
 class Hawki2ChatModel(BaseChatModel, BaseModel):
     """
-    Custom Hawki2 API client with comprehensive timeout and rate limiting protection.
+    Custom Hawki2 API client with timeout and rate limiting protection.
     """
     model: str = Field(default="gpt-4o")
     temperature: float = 0.7
     max_tokens: int = 32768
-    top_p: float = 1.0 # TODO: Can this be used here? Otherwise, throw away
+    top_p: float = 1.0
     base_backoff: float = 10.0
     connect_timeout: int = 20
     read_timeout: int = 20
-    global_timeout: int = 60
+    global_timeout: int = Field(default=config("GLOBAL_TIMEOUT", default=60, cast=int))
     max_cooldown: int = 30
     api_url: str = Field(default=config("HAWKI_API_URL"))
     api_key: str = Field(default=config("PRIMARY_API_KEY"))
-    secondary_api_key: str = Field(default=config("SECONDARY_API_KEY"))
     models: Models = Field(default_factory=Models)
-    
-    primary_failures: int = Field(default=0)
-    primary_next_available: float = Field(default=0)
-    secondary_failures: int = Field(default=0)
-    secondary_next_available: float = Field(default=0)
-    
-    last_used_primary: bool = Field(default=False)
-    request_count: int = Field(default=0)
+
+    failures: int = Field(default=0)
+    next_available: float = Field(default=0)
 
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self: str, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
     @property
@@ -170,63 +164,13 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
             return text
         return text[:max_length] + f"... [truncated {len(text) - max_length} chars]"
 
-    def _get_available_key(self, current_time: float) -> tuple[str, bool, str]:
-        """
-        Returns the best available key using round-robin with cooldown awareness and occasional randomness.
-        Returns: (api_key, is_secondary, key_type)
-        """
-        primary_available = current_time >= self.primary_next_available
-        secondary_available = current_time >= self.secondary_next_available and self.secondary_api_key
-        
-        if primary_available and secondary_available:
-            self.request_count += 1
-            if random.random() < 0.1:
-                use_secondary = random.choice([True, False])
-                logger.debug("Using random key selection instead of round-robin")
-            else:
-                use_secondary = self.request_count % 2 == 0
-            
-            if use_secondary:
-                return self.secondary_api_key, True, "secondary"
-            else:
-                return self.api_key, False, "primary"
-        
-        elif primary_available:
-            return self.api_key, False, "primary"
-        elif secondary_available:
-            return self.secondary_api_key, True, "secondary"
-        
-        if not self.secondary_api_key:
-            return self.api_key, False, "primary"
-        
-        if self.primary_next_available <= self.secondary_next_available:
-            return self.api_key, False, "primary"
-        else:
-            return self.secondary_api_key, True, "secondary"
-
-    def _set_key_cooldown(self, is_secondary: bool, current_time: float):
-        """Set exponential backoff cooldown with jitter for the specified key"""
-        if is_secondary:
-            self.secondary_failures += 1
-            base_backoff = min(self.base_backoff * (2 ** (self.secondary_failures - 1)), self.max_cooldown)
-            jitter = random.uniform(0.8, 1.2)
-            backoff = base_backoff * jitter
-            self.secondary_next_available = current_time + backoff
-            return backoff, self.secondary_failures
-        else:
-            self.primary_failures += 1
-            base_backoff = min(self.base_backoff * (2 ** (self.primary_failures - 1)), self.max_cooldown)
-            jitter = random.uniform(0.8, 1.2)
-            backoff = base_backoff * jitter
-            self.primary_next_available = current_time + backoff
-            return backoff, self.primary_failures
-
-    def _reset_key_failures(self, is_secondary: bool):
-        """Reset failure count for successful key"""
-        if is_secondary:
-            self.secondary_failures = 0
-        else:
-            self.primary_failures = 0
+    def _set_cooldown(self, current_time: float) -> float:
+        """Set exponential backoff cooldown with jitter and return the backoff duration."""
+        self.failures += 1
+        base_backoff = min(self.base_backoff * (2 ** (self.failures - 1)), self.max_cooldown)
+        backoff = base_backoff * random.uniform(0.8, 1.2)
+        self.next_available = current_time + backoff
+        return backoff
 
     def _convert_messages(self, messages: List[BaseMessage]) -> List[dict]:
         role_map = {
@@ -245,7 +189,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
 
     def _call(self, messages: List[BaseMessage], stop: Optional[List[str]] = None) -> str:
         start_time = time.time()
-        logger.info(f"Starting Hawki2 request with {len(messages)} messages (max cooldown: {self.max_cooldown/3600:.1f}h, global timeout: {self.global_timeout/3600:.1f}h)")
+        logger.info(f"Starting Hawki2 request with {len(messages)} messages (global timeout: {self.global_timeout}s)")
 
         formatted_messages = self._convert_messages(messages)
         payload = {
@@ -258,53 +202,42 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
             }
         }
 
-        # DEBUG-Logging of formatted messages
         for i, msg in enumerate(formatted_messages):
-            role = msg["role"]
-            content = self._truncate_text(msg["content"]["text"])
-            logger.debug(f"Message {i + 1} ({role}): {content}")
+            logger.debug(f"Message {i + 1} ({msg['role']}): {self._truncate_text(msg['content']['text'])}")
 
+        ratelimit:bool = False
         attempt = 0
         while True:
             current_time = time.time()
-            
-            # Timeout-Check
-            if current_time - start_time > self.global_timeout: 
-                logger.error(f"Global timeout ({self.global_timeout}s) exceeded for Hawki2 request")
-                raise RuntimeError(f"Request timeout after {self.global_timeout} seconds")
+            elapsed = current_time - start_time
+            remaining = self.global_timeout - elapsed
 
-            # Key selection
-            current_key, using_secondary, key_type = self._get_available_key(current_time)
-            
-            wait_time = 0
-            if using_secondary and current_time < self.secondary_next_available:
-                wait_time = self.secondary_next_available - current_time
-            elif not using_secondary and current_time < self.primary_next_available:
-                wait_time = self.primary_next_available - current_time
-                
+            if elapsed > self.global_timeout:
+                logger.error(f"Global timeout ({self.global_timeout}s) exceeded after {attempt} attempt(s)")
+                raise GlobalTimeoutError(f"Request timeout after {self.global_timeout} seconds, rate limit hit: {ratelimit}, attempts within global timeout: {attempt}")
+
+            # Wait out cooldown if active   
+            wait_time = self.next_available - current_time
             if wait_time > 0:
-                if wait_time > self.max_cooldown:
-                    logger.error(f"{key_type} key cooldown too long ({wait_time:.1f}s). Giving up.")
-                    raise RuntimeError(f"{key_type} key cooldown exceeds maximum wait time")
-                    
-                logger.warning(f"{key_type} key in cooldown. Waiting {wait_time:.1f}s ({wait_time/3600:.1f}h)... (Total elapsed: {current_time - start_time:.1f}s)")
+                if wait_time > remaining:
+                    logger.error(f"Cooldown ({wait_time:.1f}s) exceeds remaining timeout ({remaining:.1f}s). Giving up.")
+                    raise CooldownTimeoutError(f"Cooldown of {wait_time:.1f}s exceeds remaining timeout of {remaining:.1f}s, rate limit hit: {ratelimit}, attempts within global timeout: {attempt}")
+                logger.warning(f"Waiting {wait_time:.1f}s for cooldown to expire (remaining timeout: {remaining:.1f}s)...")
                 time.sleep(wait_time)
-                logger.info(f"{key_type} key cooldown completed after {wait_time:.1f}s. Resuming attempts...")
                 continue
-            
+
             attempt += 1
+            remaining = self.global_timeout - (time.time() - start_time)
+            logger.info(f"Attempt {attempt} — remaining timeout: {remaining:.1f}s")
 
             headers = {
-                "Authorization": f"Bearer {current_key}",
+                "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
 
             try:
-                logger.info(f"Attempt {attempt} with {key_type} key to Hawki2 API (unlimited retries with dual-key system)")
-                
-                pre_request_delay = random.uniform(0.1, 0.5)
-                time.sleep(pre_request_delay)
-                
+                time.sleep(random.uniform(0.1, 0.5))
+
                 response = requests.post(
                     self.api_url,
                     json=payload,
@@ -313,65 +246,61 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                 )
 
                 if not response.text.strip():
-                    logger.warning(f"Empty response body from {key_type} key (status {response.status_code})")
-                    backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
-                    logger.warning(f"{key_type} key backing off for {backoff}s ({backoff/3600:.1f}h) - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
+                    logger.warning(f"Empty response body (status {response.status_code}). Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                    self._set_cooldown(time.time())
                     continue
 
                 if response.status_code == 200:
                     try:
                         data = response.json()
                     except Exception as e:
-                        logger.error(f"JSON parsing failed with {key_type} key: {e}. Response: {self._truncate_text(response.text, 1000)}")
-                        backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
-                        logger.warning(f"{key_type} key backing off for {backoff}s ({backoff/3600:.1f}h) due to JSON parse error - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
+                        logger.error(f"JSON parsing failed: {e}. Response: {self._truncate_text(response.text, 1000)}")
+                        logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                        self._set_cooldown(time.time())
                         continue
 
                     if 'error' in data:
                         error_msg = data['error'].get('message', str(data['error']))
-                        logger.error(f"Hawki2 API error with {key_type} key: {error_msg}")
-                        backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
-                        logger.warning(f"{key_type} key backing off for {backoff}s ({backoff/3600:.1f}h) due to API error - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
+                        logger.error(f"Hawki2 API returned an error: {error_msg}")
+                        logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                        self._set_cooldown(time.time())
                         continue
 
                     text = data.get("text") or data.get("content", {}).get("text") or ""
                     if text:
-                        total_time = time.time() - start_time
-                        logger.info(f"Successfully extracted response after {total_time:.1f}s total (attempt {attempt}, {key_type} key)")
+                        self.failures = 0
+                        logger.info(f"Success after {time.time() - start_time:.1f}s (attempt {attempt})")
                         logger.debug(f"Extracted response: {self._truncate_text(text)}")
-                        self._reset_key_failures(using_secondary)
                         return text
                     else:
-                        logger.warning(f"Empty 'text' in response from {key_type} key. Data: {self._truncate_text(str(data), 1000)}")
-                        backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
-                        logger.warning(f"{key_type} key returning empty responses. Backing off for {backoff}s ({backoff/3600:.1f}h) - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
+                        logger.warning(f"Empty 'text' in response. Data: {self._truncate_text(str(data), 1000)}")
+                        logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                        self._set_cooldown(time.time())
                         continue
 
                 response.raise_for_status()
 
             except requests.exceptions.Timeout as e:
-                logger.warning(f"Hawki2 API timeout with {key_type} key: {str(e)}")
-                backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
-                logger.warning(f"{key_type} key backing off for {backoff}s ({backoff/3600:.1f}h) due to timeout - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
+                logger.warning(f"Request timed out: {e}")
+                logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                self._set_cooldown(time.time())
                 continue
 
             except requests.exceptions.RequestException as e:
                 status_code = getattr(e.response, 'status_code', None)
                 if status_code == 429:
-                    logger.warning(f"Rate limit error (429) on {key_type} key")
-                    # Set cooldown for this key and try the other
-                    backoff, failure_count = self._set_key_cooldown(using_secondary, time.time())
-                    logger.warning(f"{key_type} key rate limited (429). Backing off for {backoff}s ({backoff/3600:.1f}h) - failure #{failure_count} (total elapsed: {time.time() - start_time:.1f}s)")
+                    backoff = self._set_cooldown(time.time())
+                    logger.warning(f"Rate limit hit (429). Backing off for {backoff:.1f}s (failure #{self.failures}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                    logger.warning(f"Retrying (attempt {attempt + 1}) after cooldown...")
                     continue
                 elif status_code == 401:
-                    logger.error(f"Unauthorized (401) error with {key_type} key: {str(e)}")
-                    raise RuntimeError(f"Unauthorized access with {key_type} key")
-                else: # That's not a Rate limit error, give up # Wrong model response needed, such as 4xx # Usually the Hawki API needs to return a proper status code and message for inaccapable models
-                    logger.error(f"Error: {str(e)}")
-                    raise RuntimeError(f"Request failed with status code {status_code} and error: {str(e)}")
+                    logger.error(f"Unauthorized (401): {e}")
+                    raise UnauthorizedError("Unauthorized access — check your API key", status_code=401)
+                else:
+                    logger.error(f"Request failed with status {status_code}: {e}")
+                    raise RequestFailedError(f"Request failed with status code {status_code}: {e}", status_code=status_code)
 
-        # This should never be reached due to the infinite loop, but just in case
-        raise RuntimeError(f"Unexpected exit from retry loop after {attempt} attempts")
+        raise RequestFailedError(f"Unexpected exit from retry loop after {attempt} attempts")
 
     def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None) -> ChatResult:
         logger.debug(f"Starting Hawki2 generation with {len(messages)} messages")
@@ -387,14 +316,13 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         model:str = settings.get("model")
         if model not in self.models.list(): # Validate only if a model was provided
             if model not in self.models.list_initial():
-                raise ModelNotFoundException(f"Model '{model}' not supported.")
+                raise ModelNotFoundException(f"Model '{model}' not supported.", status_code=400)
             else:
-                raise ModelNotFoundException(f"Model '{model}' currently not available. Send a GET-request to /health to check available models.")
+                raise ModelNotFoundException(f"Model '{model}' currently not available. Send a GET-request to /health to check available models.", status_code=503)
         self.model = settings.get("model", self.model)
         self.temperature = settings.get("temperature", self.temperature)
         self.max_tokens = settings.get("max_tokens", self.max_tokens)
         self.top_p = settings.get("top_p", self.top_p)
-        # If api_key is provided in settings, update it
+        self.global_timeout = settings.get("timeout", self.global_timeout)
         if "api_key" in settings:
             self.api_key = settings.get("api_key")
-
