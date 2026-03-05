@@ -92,6 +92,56 @@ The request format follows the OpenAI standard, i.e.:
 }
 ```
 
+== Models
+
+=== Initial model list
+
+The wrapper ships with a pre-configured list of models, defined via the `MODELS` variable in `config/models.env`.
+These are the models that were/are _offered_ by the HAWKI instance and are referred to as the **initial models** throughout the codebase.
+
+At the time of writing, the default initial model list is:
+
+[cols="1,1", options="header"]
+|===
+| Model | Provider
+
+| `gpt-4o` | OpenAI
+| `gpt-4o-mini` | OpenAI
+| `gpt-4.1` | OpenAI
+| `gpt-4.1-mini` | OpenAI
+| `gpt-5` | OpenAI
+| `o1-mini` | OpenAI
+| `o4-mini` | OpenAI
+| `gemini-1.5-flash` | Google
+| `gemini-2.0-flash-lite` | Google
+| `gemini-2.5-pro-exp-03-25` | Google
+| `meta-llama-3.1-8b-instruct` | Meta
+| `meta-llama-3.1-70b-instruct` | Meta
+| `deepseek-r1` | DeepSeek
+| `deepseek-r1-distill-llama-70b` | DeepSeek
+| `mistral-large-instruct` | Mistral
+| `codestral-22b` | Mistral
+| `qwen2.5-72b-instruct` | Alibaba
+| `qwen3-32b` | Alibaba
+| `gemma-3-27b-it` | Google DeepMind
+| `medgemma-3-27b-it` | Google DeepMind
+|===
+
+=== Model availability
+
+Not all initial models may be available at any given time.
+The set of models accessible through the underlying Hawki instance can change — models may be temporarily disabled, rate-limited, or removed by the Hawki operator (ITSZ) without notice.
+
+During startup the wrapper probes all initial models and removes unavailable ones from its active list.
+This ensures that only working models are served to clients after startup.
+
+[NOTE]
+====
+The active model list is updated on every call to `/health/details`. Use that endpoint to get the current availability status of each model and to force a refresh of the active list.
+
+To avoid unneccesary requests to the availability status, try your desired model and use the `/health/details` endpoint only when you face problems.
+====
+
 == API Endpoints
 
 === `GET /health`
@@ -116,6 +166,7 @@ Example response:
 }
 ```
 
+[[_get_health_details]]
 === `GET /health/details`
 
 A detailed diagnostic endpoint that actively probes each configured model by sending a real test request. This endpoint is more expensive to call and should not be used for frequent liveness probes.
