@@ -42,7 +42,7 @@ CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
 CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
 client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
-KEY_MODELS_USAGE = dict() # model_name -> list of ModelUsage instances
+KEY_MODELS_USAGE = dict() # api_key -> list of ModelUsage instances
 
 class ModelUsage:
     # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
@@ -55,7 +55,6 @@ class ModelUsage:
     def add(self, dt: datetime | None = None):
         if dt is None:
             dt = datetime.now()
-
         self._timestamps.append(dt)
         self._cleanup()
     
@@ -89,7 +88,7 @@ class ModelUsage:
 
             # total elements minus elements before cutoff
             result.append(total - (idx + 1))
-            logger.info(f"Model {self.model_name} - Usage in last {hours} hour(s): {result[hours -1]}")
+            logger.debug(f"Model {self.model_name} - Usage in last {hours} hour(s): {result[hours -1]}")
 
         return result
 
@@ -98,10 +97,8 @@ HTTP_SERVER = AsyncClient()
 def add_model_usage(api_key: str, model_name: str):
     if api_key not in KEY_MODELS_USAGE:
         KEY_MODELS_USAGE[api_key] = dict()
-
     if model_name not in KEY_MODELS_USAGE[api_key]:
         KEY_MODELS_USAGE[api_key][model_name] = ModelUsage(model_name)
-
     KEY_MODELS_USAGE[api_key][model_name].add()
 
 @app.get("/")
@@ -182,7 +179,7 @@ async def process_chat_request(body: dict, auth_header: str | None, request_obj:
     completion_result = completion_cache.get(cache_key)
     if completion_result is not None and use_cache:
         logger.warning(f"Completion result found in cache for input: {messages} ({cache_key})")
-        add_model_usage(model, request_api_key)
+        add_model_usage(request_api_key, model)
         return fastapi_responses.JSONResponse(
             content=completion_result,
             headers={"X-Cache-Hit": "true"}
