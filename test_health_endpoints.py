@@ -131,8 +131,9 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         self.mock_health_check.side_effect = default_health_check
         
         # Configure mock to return proper async responses
-        async def mock_chat_process(body: dict, auth_header: str, request_obj=None, use_cache: bool = True):
+        async def mock_chat_process(body: dict, header: dict | None, request_obj=None, use_cache: bool = True):
             # Track usage so health/details usage assertions work
+            auth_header = header.get("Authorization") if header else None
             if auth_header:
                 request_api_key = auth_header.replace("Bearer ", "")
                 model = body.get("model")
