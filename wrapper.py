@@ -42,7 +42,7 @@ CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
 CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
 client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
-KEY_MODELS_USAGE = dict() # api_key -> list of ModelUsage instances
+KEY_MODELS_USAGE: dict = dict()  # api_key -> dict[model_name -> ModelUsage]
 
 class ModelUsage:
     # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
@@ -537,6 +537,24 @@ def log_request(request: Request):
         f.write(f"Headers: {request.headers}\n")
         f.write(f"Client: {request.client.host}\n\n")
 
+async def cleanup_stale_model_usage():
+    """
+    Background task: hourly removal of API keys whose ModelUsage entries are all empty
+    (i.e. no activity within the last 24 hours after internal cleanup).
+    """
+    while True:
+        await asyncio.sleep(3600)  # run every hour
+        stale_keys = [
+            key for key, models in list(KEY_MODELS_USAGE.items())
+            if all(len(usage.getTimestamps()) == 0 for usage in models.values())
+        ]
+        for key in stale_keys:
+            del KEY_MODELS_USAGE[key]
+        if stale_keys:
+            logger.info(f"Cleaned up {len(stale_keys)} stale API key(s) from KEY_MODELS_USAGE")
+        logger.debug(f"KEY_MODELS_USAGE size after cleanup: {len(KEY_MODELS_USAGE)} key(s)")
+
+
 async def run_startup_checks():
     """
     Run startup checks when the application starts
@@ -553,7 +571,9 @@ async def run_startup_checks():
     logger.info("Checking available models...")
     await run_model_diagnostics()
 
-    # Further checks
+    # Start background cleanup for KEY_MODELS_USAGE
+    asyncio.create_task(cleanup_stale_model_usage())
+    logger.info("KEY_MODELS_USAGE cleanup task started (runs hourly)")
 
     logger.info("Startup checks completed.")
 
