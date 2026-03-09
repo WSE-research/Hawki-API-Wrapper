@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from collections import deque
 from fastapi import FastAPI, Request, Header
 import uvicorn
@@ -32,7 +33,14 @@ HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operatio
 logger.debug(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
 logger.debug(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
 logger.info(f"HAWKI_API_URL: {HAWKI_API_URL}")
-app = FastAPI(docs_url="/swagger-ui", redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage startup and shutdown of background tasks and startup checks."""
+    await run_startup_checks()
+    yield
+
+app = FastAPI(docs_url="/swagger-ui", redoc_url=None, lifespan=lifespan)
 hawkiClient: Hawki2ChatModel = Hawki2ChatModel()
 
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
@@ -42,7 +50,7 @@ CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
 CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
 client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
-KEY_MODELS_USAGE: dict = dict()  # api_key -> dict[model_name -> ModelUsage]
+KEY_MODELS_USAGE: dict[str, dict[str, ModelUsage]] = {}
 
 class ModelUsage:
     # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
@@ -64,6 +72,11 @@ class ModelUsage:
 
     def getModelName(self):
         return self.model_name
+
+    def is_empty(self) -> bool:
+        """Return True if there are no timestamps within the last 24 hours."""
+        self._cleanup()
+        return len(self._timestamps) == 0
 
     def _cleanup(self):
         cutoff = datetime.now() - timedelta(hours=24)
@@ -319,7 +332,6 @@ async def run_model_diagnostics(api_key:str) -> dict:
     hawkiClient.models.set(list(available_models))
 
     return modelCheckJson
-    
 
 @app.get("/health/details")
 async def health_details(authorization: str | None = Header(default=None)):
@@ -334,7 +346,7 @@ async def health_details(authorization: str | None = Header(default=None)):
         if api_key not in ALLOWED_KEYS and api_key not in KEY_MODELS_USAGE and not is_api_key_working(api_key):
             result = "Couldn't verify API key provided in Authorization header. Provide a valid API key to get model usage details."
         else:
-            diagnostics = await run_model_diagnostics(api_key)
+            diagnostics = await run_model_diagnostics(api_key) # Note: This updates the available models in the client.
             if api_key in KEY_MODELS_USAGE:
                 for model in diagnostics["models"]:
                     if model in KEY_MODELS_USAGE[api_key]:
@@ -552,7 +564,7 @@ async def cleanup_stale_model_usage():
         await asyncio.sleep(3600)  # run every hour
         stale_keys = [
             key for key, models in list(KEY_MODELS_USAGE.items())
-            if all(len(usage.getTimestamps()) == 0 for usage in models.values())
+            if all(usage.is_empty() for usage in models.values())
         ]
         for key in stale_keys:
             del KEY_MODELS_USAGE[key]
@@ -606,6 +618,5 @@ async def test_hawki_endpoint() -> bool:
 if __name__ == "__main__":
     logger.info(f"Starting the wrapper on port {PORT}")
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
-    asyncio.run(run_startup_checks())
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))
 
