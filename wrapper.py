@@ -157,7 +157,7 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
     stream: bool = body.get("stream", False)
 
     # Log the request details
-    logger.info(f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}")
+    logger.info(f"chat completions request received - (Shared) API Key: ...{request_api_key[-4:] if request_api_key else 'None'}, Model: {model}")
     logger.debug(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
@@ -282,7 +282,7 @@ async def health():
     }
 
 
-async def run_model_diagnostics() -> dict:
+async def run_model_diagnostics(api_key:str) -> dict:
     """
     Run detailed model diagnostics and refresh available models in the client.
     """
@@ -294,10 +294,10 @@ async def run_model_diagnostics() -> dict:
     for model in hawkiClient.models.list_initial():
 
         # First attempt
-        result1 = await health_check_model(model, use_cache=False)
+        result1 = await health_check_model(model, api_key, use_cache=False)
 
         # Second attempt
-        result2 = await health_check_model(model, use_cache=True)
+        result2 = await health_check_model(model, api_key, use_cache=True)
             
         # Add model entry if not exists
 
@@ -326,28 +326,34 @@ async def health_details(authorization: str | None = Header(default=None)):
     """
     Detailed health endpoint with per-model diagnostics.
     """
-    diagnostics = await run_model_diagnostics()
-    
+
     # Provide model usage for api key passed
     if authorization:
-        logger.info(f"Authorization header provided for health details")
         api_key = authorization.replace("Bearer ", "")
-        if api_key in KEY_MODELS_USAGE:
-            for model in diagnostics["models"]:
-                if model in KEY_MODELS_USAGE[api_key]:
-                    usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
-                    diagnostics["models"][model]["usage"] = {
-                        str(-(index+1)): value for index, value in enumerate(usage_per_hour)
-                    }
+        # Check key
+        if api_key not in ALLOWED_KEYS and api_key not in KEY_MODELS_USAGE and not is_api_key_working(api_key):
+            result = "Couldn't verify API key provided in Authorization header. Provide a valid API key to get model usage details."
+        else:
+            diagnostics = await run_model_diagnostics(api_key)
+            if api_key in KEY_MODELS_USAGE:
+                for model in diagnostics["models"]:
+                    if model in KEY_MODELS_USAGE[api_key]:
+                        usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
+                        diagnostics["models"][model]["usage"] = {
+                            str(-(index+1)): value for index, value in enumerate(usage_per_hour)
+                        }
+            result = diagnostics["models"]
+    else:
+        result = "No API key provided in Authorization header. Provide a valid API key to get model usage details."
 
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "completion_cache_size": len(completion_cache.cache),
-        "model_check": diagnostics["models"],
+        "model_check": result,
     }
 
-async def health_check_model(model: str, use_cache: bool = False) -> dict:
+async def health_check_model(model: str, api_key: str, use_cache: bool = False) -> dict:
     """
     Health check for a specific model
     """
@@ -364,7 +370,7 @@ async def health_check_model(model: str, use_cache: bool = False) -> dict:
     # Record both a human-readable timestamp and a precise start time for runtime measurement
     request_start_time = datetime.now()
     start_epoch = time.time()
-    response = await process_chat_request(request, {"Authorization": f"Bearer {ALLOWED_KEYS[0]}"}, use_cache=use_cache)
+    response = await process_chat_request(request, {"Authorization": f"Bearer {api_key}"}, use_cache=use_cache)
     # process_chat_request returns a FastAPI JSONResponse; extract JSON body and headers
     response_body = json.loads(response.body.decode())
     result["started_at"] = request_start_time.isoformat()
@@ -569,7 +575,7 @@ async def run_startup_checks():
 
     # Check 2: Check usable models
     logger.info("Checking available models...")
-    await run_model_diagnostics()
+    await run_model_diagnostics(ALLOWED_KEYS[0])  # Use primary shared API key for diagnostics
 
     # Start background cleanup for KEY_MODELS_USAGE
     asyncio.create_task(cleanup_stale_model_usage())
