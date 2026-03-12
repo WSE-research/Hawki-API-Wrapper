@@ -292,6 +292,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                     backoff = self._set_cooldown(time.time())
                     logger.warning(f"Rate limit hit (429). Backing off for {backoff:.1f}s (failure #{self.failures}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
                     logger.warning(f"Retrying (attempt {attempt + 1}) after cooldown...")
+                    ratelimit = True
                     continue
                 elif status_code == 401:
                     logger.error(f"Unauthorized (401): {e}")
