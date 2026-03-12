@@ -29,15 +29,26 @@ ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default="").split(",")
 PORT = config('PORT', default=8000)
 HAWKI_API_URL = config('HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
 HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
+SKIP_STARTUP_CHECKS = config("SKIP_STARTUP_CHECKS", default="false").lower() == "true"
+try:
+    STARTUP_MAX_RETRIES = int(config("STARTUP_MAX_RETRIES", default=0))  # 0 = unlimited
+except ValueError:
+    raise ValueError("STARTUP_MAX_RETRIES must be a non-negative integer (0 = unlimited retries)")
 
 logger.debug(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
 logger.debug(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
 logger.info(f"HAWKI_API_URL: {HAWKI_API_URL}")
+logger.info(f"SKIP_STARTUP_CHECKS: {SKIP_STARTUP_CHECKS}")
+logger.info(f"STARTUP_MAX_RETRIES: {STARTUP_MAX_RETRIES} (0 = unlimited)")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage startup and shutdown of background tasks and startup checks."""
-    await run_startup_checks()
+    if not SKIP_STARTUP_CHECKS:
+        await run_startup_checks()
+    else:
+        logger.warning("Startup checks are disabled (SKIP_STARTUP_CHECKS=true). Skipping...")
+        asyncio.create_task(cleanup_stale_model_usage())
     yield
 
 app = FastAPI(docs_url="/swagger-ui", redoc_url=None, lifespan=lifespan)
@@ -575,14 +586,27 @@ async def cleanup_stale_model_usage():
 
 async def run_startup_checks():
     """
-    Run startup checks when the application starts
+    Run startup checks when the application starts.
+    Retries the Hawki API connection check up to STARTUP_MAX_RETRIES times
+    (0 means unlimited retries).
     """
     logger.info("Running startup checks...")
 
     # Check 1: Test connection to Hawki API
     logger.info("Checking connection to Hawki API...")
+    attempts = 0
     while not await test_hawki_endpoint():
-        logger.warning("Hawki API is not reachable. Retrying in 10 seconds...")
+        attempts += 1
+        if STARTUP_MAX_RETRIES > 0 and attempts >= STARTUP_MAX_RETRIES:
+            logger.error(
+                f"Hawki API is not reachable after {attempts} attempt(s). "
+                "Aborting startup checks. The service may be degraded."
+            )
+            return
+        logger.warning(
+            f"Hawki API is not reachable (attempt {attempts}"
+            f"{'/' + str(STARTUP_MAX_RETRIES) if STARTUP_MAX_RETRIES > 0 else ''}). Retrying in 10 seconds..."
+        )
         await asyncio.sleep(10)
 
     # Check 2: Check usable models
