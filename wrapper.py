@@ -479,9 +479,7 @@ def setClient(api_key: str) -> Hawki2ChatModel:
         return client
     # Check if user provided API key (for Hawki Web UI) is valid
     elif api_key and is_api_key_working(api_key): # TODO: Restrict further, especially secondary key usage 
-        client.setConfig({
-            "api_key": api_key
-        })
+        client.setApiKey(api_key)
         return client
     else:  # Not a valid API key
         raise ValueError("Invalid API Key")

@@ -326,4 +326,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         timeout = settings.get("timeout")
         self.global_timeout = timeout if timeout is not None else self.global_timeout
         if "api_key" in settings:
-            self.api_key = settings.get("api_key")
+            self.setApiKey(settings["api_key"])
+    
+    def setApiKey(self, api_key: str):
+        self.api_key = api_key
