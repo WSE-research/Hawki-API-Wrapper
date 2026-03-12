@@ -34,3 +34,10 @@ class RequestFailedError(Exception):
     def __init__(self, message: str | None = None, status_code: int | None = None):
         super().__init__(message)
         self.status_code = status_code
+
+class EmptyResponseError(Exception):
+    """Raised when the upstream API returns an empty response."""
+
+    def __init__(self, message: str | None = None, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code

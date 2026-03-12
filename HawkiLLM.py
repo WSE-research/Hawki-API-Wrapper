@@ -19,7 +19,7 @@ from tenacity import (
 )
 from requests.exceptions import HTTPError, Timeout
 
-from exceptions import ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
+from exceptions import EmptyResponseError, ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
 
 OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
 
@@ -108,6 +108,7 @@ class Models:
     def __init__(self):
         # Load from JSON
         self.models = initial_models
+        self.refreshed_at = 0
 
     def list(self) -> List[str]:
         """
@@ -273,10 +274,11 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                         logger.debug(f"Extracted response: {self._truncate_text(text)}")
                         return text
                     else:
-                        logger.warning(f"Empty 'text' in response. Data: {self._truncate_text(str(data), 1000)}")
-                        logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
-                        self._set_cooldown(time.time())
-                        continue
+                        #logger.warning(f"Empty 'text' in response. Data: {self._truncate_text(str(data), 1000)}")
+                        #logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                        #self._set_cooldown(time.time())
+                        #continue
+                        raise EmptyResponseError("Upstream API returned an empty response", status_code=522)
 
                 response.raise_for_status()
 

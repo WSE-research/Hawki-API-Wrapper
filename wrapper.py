@@ -7,7 +7,7 @@ from fastapi import responses as fastapi_responses
 from datetime import datetime, timedelta
 import json
 from decouple import config
-from exceptions import ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
+from exceptions import EmptyResponseError, ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
 from logger_config import logger
 from cache import LRUCache
 from helpers import pretty_print_json
@@ -31,6 +31,7 @@ PRIMARY_API_KEY = config("PRIMARY_API_KEY", default=None)
 PORT = config('PORT', default=8000)
 HAWKI_API_URL = config('HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
 HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
+DEFAULT_OWNER = "Hawki HTWK Leipzig"
 
 logger.debug(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
 logger.debug(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
@@ -55,6 +56,48 @@ client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 KEY_MODELS_USAGE: dict[str, dict[str, ModelUsage]] = {}
 
 HTTP_SERVER = AsyncClient()
+
+def _format_model_entry(model: str | dict) -> dict:
+    refreshed_at = hawkiClient.models.refreshed_at
+
+    if isinstance(model, dict):
+        return {
+            "id": model.get("id") or model.get("name") or "unknown",
+            "object": model.get("object", "model"),
+            "created": int(model.get("created", refreshed_at) or refreshed_at),
+            "owned_by": model.get("owned_by", DEFAULT_OWNER)
+        }
+
+    return {
+        "id": model,
+        "object": "model",
+        "created": refreshed_at,
+        "owned_by": DEFAULT_OWNER
+    }
+
+
+def format_models_response(model_list: list[str] | dict) -> dict:
+    if isinstance(model_list, dict):
+        if model_list.get("object") == "list" and isinstance(model_list.get("data"), list):
+            return {
+                "object": "list",
+                "data": [_format_model_entry(model) for model in model_list["data"]]
+            }
+
+        if isinstance(model_list.get("models"), list):
+            models = model_list["models"]
+        elif isinstance(model_list.get("data"), list):
+            models = model_list["data"]
+        else:
+            models = []
+    else:
+        models = model_list
+
+    return {
+        "object": "list",
+        "data": [_format_model_entry(model) for model in models]
+    }
+
 
 def add_model_usage(api_key: str, model_name: str):
     if api_key not in KEY_MODELS_USAGE:
@@ -194,6 +237,12 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
                 content={"error": "Upstream request failed", "detail": str(e)},
                 status_code=e.status_code or 502
             )
+        except EmptyResponseError as e:
+            logger.error(f"Empty response: {e}")
+            return fastapi_responses.JSONResponse(
+                content="Invalid (empty) response from Hawki API. Retry or try another model.",
+                status_code=e.status_code or 522
+            )
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             return fastapi_responses.JSONResponse(
@@ -226,7 +275,7 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
             logger.error(f"Error parsing response: {e}")
             logger.error(f"Response: {pformat(response.model_dump(), indent=4)}")
             return fastapi_responses.JSONResponse(
-                content={"error": "Internal Server Error"},
+                content=f"Error parsing response from Hawki API. Error {e}",
                 status_code=500
             )
 
@@ -278,6 +327,7 @@ async def run_model_diagnostics(api_key:str) -> dict:
         else:
             logger.error(f"Model {model_name} is {status}")
 
+    hawkiClient.models.refreshed_at = int(time.time())
     hawkiClient.models.set(list(available_models))
 
     return modelCheckJson
@@ -418,7 +468,7 @@ async def list_models(request: Request):
 
     try:
         # Forward the request to OpenAI API using the client
-        model_list = hawkiClient.models.list()
+        model_list = format_models_response(hawkiClient.models.list())
 
         # models: pretty print the JSON response
         logger.info(

@@ -42,7 +42,7 @@ class TestModelUsageAdd(unittest.TestCase):
 
     def test_add_explicit_datetime(self):
         usage = ModelUsage("m")
-        dt = datetime(2026, 3, 4, 10, 0, 0)
+        dt = datetime.now() - timedelta(hours=1)
         usage.add(dt)
         self.assertIn(dt, usage.getTimestamps())
 
