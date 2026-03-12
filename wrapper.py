@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from collections import deque
 from fastapi import FastAPI, Request, Header
 import uvicorn
@@ -24,7 +25,8 @@ import time
 
 load_dotenv('./service_config/files/.env')
 
-ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default="").split(",")
+ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default=None).split(",")
+PRIMARY_API_KEY = config("PRIMARY_API_KEY", default=None)
 PORT = config('PORT', default=8000)
 HAWKI_API_URL = config('HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
 HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
@@ -32,7 +34,14 @@ HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operatio
 logger.debug(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
 logger.debug(f"Number of ALLOWED_KEYS: {len(ALLOWED_KEYS)}")
 logger.info(f"HAWKI_API_URL: {HAWKI_API_URL}")
-app = FastAPI(docs_url="/swagger-ui", redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage startup and shutdown of background tasks and startup checks."""
+    await run_startup_checks()
+    yield
+
+app = FastAPI(docs_url="/swagger-ui", redoc_url=None, lifespan=lifespan)
 hawkiClient: Hawki2ChatModel = Hawki2ChatModel()
 
 LRU_CACHE_CAPACITY = config('LRU_CACHE_CAPACITY', default=10000)
@@ -42,7 +51,7 @@ CLIENT_CACHE_MAXSIZE = int(config('CLIENT_CACHE_MAXSIZE', default=100))
 CLIENT_CACHE_TTL = int(config('CLIENT_CACHE_TTL', default=600))  # seconds
 client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
-KEY_MODELS_USAGE = dict() # api_key -> list of ModelUsage instances
+KEY_MODELS_USAGE: dict[str, dict[str, ModelUsage]] = {}
 
 class ModelUsage:
     # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
@@ -64,6 +73,11 @@ class ModelUsage:
 
     def getModelName(self):
         return self.model_name
+
+    def is_empty(self) -> bool:
+        """Return True if there are no timestamps within the last 24 hours."""
+        self._cleanup()
+        return len(self._timestamps) == 0
 
     def _cleanup(self):
         cutoff = datetime.now() - timedelta(hours=24)
@@ -157,7 +171,7 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
     stream: bool = body.get("stream", False)
 
     # Log the request details
-    logger.info(f"chat completions request received - (Shared) API Key: {request_api_key}, Model: {model}")
+    logger.info(f"chat completions request received - (Shared) API Key: ...{request_api_key[-4:] if request_api_key else 'None'}, Model: {model}")
     logger.debug(f"Messages: {messages}")
 
     # create a key from all the request details, and the current week number and year
@@ -282,7 +296,7 @@ async def health():
     }
 
 
-async def run_model_diagnostics() -> dict:
+async def run_model_diagnostics(api_key:str) -> dict:
     """
     Run detailed model diagnostics and refresh available models in the client.
     """
@@ -294,10 +308,10 @@ async def run_model_diagnostics() -> dict:
     for model in hawkiClient.models.list_initial():
 
         # First attempt
-        result1 = await health_check_model(model, use_cache=False)
+        result1 = await health_check_model(model, api_key, use_cache=False)
 
         # Second attempt
-        result2 = await health_check_model(model, use_cache=True)
+        result2 = await health_check_model(model, api_key, use_cache=True)
             
         # Add model entry if not exists
 
@@ -319,35 +333,40 @@ async def run_model_diagnostics() -> dict:
     hawkiClient.models.set(list(available_models))
 
     return modelCheckJson
-    
 
 @app.get("/health/details")
 async def health_details(authorization: str | None = Header(default=None)):
     """
     Detailed health endpoint with per-model diagnostics.
     """
-    diagnostics = await run_model_diagnostics()
-    
+
     # Provide model usage for api key passed
     if authorization:
-        logger.info(f"Authorization header provided for health details")
         api_key = authorization.replace("Bearer ", "")
-        if api_key in KEY_MODELS_USAGE:
-            for model in diagnostics["models"]:
-                if model in KEY_MODELS_USAGE[api_key]:
-                    usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
-                    diagnostics["models"][model]["usage"] = {
-                        str(-(index+1)): value for index, value in enumerate(usage_per_hour)
-                    }
+        # Check key
+        if api_key not in ALLOWED_KEYS and api_key not in KEY_MODELS_USAGE and not is_api_key_working(api_key):
+            result = "Couldn't verify API key provided in Authorization header. Provide a valid API key to get model usage details."
+        else:
+            diagnostics = await run_model_diagnostics(api_key) # Note: This updates the available models in the client.
+            if api_key in KEY_MODELS_USAGE:
+                for model in diagnostics["models"]:
+                    if model in KEY_MODELS_USAGE[api_key]:
+                        usage_per_hour = KEY_MODELS_USAGE[api_key][model].getUsagePerHour()
+                        diagnostics["models"][model]["usage"] = {
+                            str(-(index+1)): value for index, value in enumerate(usage_per_hour)
+                        }
+            result = diagnostics["models"]
+    else:
+        result = "No API key provided in Authorization header. Provide a valid API key to get model usage details."
 
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "completion_cache_size": len(completion_cache.cache),
-        "model_check": diagnostics["models"],
+        "model_check": result,
     }
 
-async def health_check_model(model: str, use_cache: bool = False) -> dict:
+async def health_check_model(model: str, api_key: str, use_cache: bool = False) -> dict:
     """
     Health check for a specific model
     """
@@ -364,7 +383,7 @@ async def health_check_model(model: str, use_cache: bool = False) -> dict:
     # Record both a human-readable timestamp and a precise start time for runtime measurement
     request_start_time = datetime.now()
     start_epoch = time.time()
-    response = await process_chat_request(request, {"Authorization": f"Bearer {ALLOWED_KEYS[0]}"}, use_cache=use_cache)
+    response = await process_chat_request(request, {"Authorization": f"Bearer {api_key}"}, use_cache=use_cache)
     # process_chat_request returns a FastAPI JSONResponse; extract JSON body and headers
     response_body = json.loads(response.body.decode())
     result["started_at"] = request_start_time.isoformat()
@@ -537,12 +556,40 @@ def log_request(request: Request):
         f.write(f"Headers: {request.headers}\n")
         f.write(f"Client: {request.client.host}\n\n")
 
+async def cleanup_stale_model_usage():
+    """
+    Background task: hourly removal of API keys whose ModelUsage entries are all empty
+    (i.e. no activity within the last 24 hours after internal cleanup).
+    """
+    while True:
+        await asyncio.sleep(3600)  # run every hour
+        stale_keys = [
+            key for key, models in list(KEY_MODELS_USAGE.items())
+            if all(usage.is_empty() for usage in models.values())
+        ]
+        for key in stale_keys:
+            del KEY_MODELS_USAGE[key]
+        if stale_keys:
+            logger.info(f"Cleaned up {len(stale_keys)} stale API key(s) from KEY_MODELS_USAGE")
+        logger.debug(f"KEY_MODELS_USAGE size after cleanup: {len(KEY_MODELS_USAGE)} key(s)")
+
+
 async def run_startup_checks():
     """
     Run startup checks when the application starts
     """
     logger.info("Running startup checks...")
 
+    # Check 0: Check if any API key is set
+    if not PRIMARY_API_KEY:
+        logger.error("PRIMARY_API_KEY is not set. Exiting.")
+        raise SystemExit("Fatal: PRIMARY_API_KEY is not configured")
+    
+    if not ALLOWED_KEYS or not ALLOWED_KEYS[0]:
+        logger.warning("ALLOWED_KEYS is not set or empty.")
+    
+    primary_key = ALLOWED_KEYS[0] if ALLOWED_KEYS and ALLOWED_KEYS[0] else PRIMARY_API_KEY
+    
     # Check 1: Test connection to Hawki API
     logger.info("Checking connection to Hawki API...")
     while not await test_hawki_endpoint():
@@ -551,9 +598,11 @@ async def run_startup_checks():
 
     # Check 2: Check usable models
     logger.info("Checking available models...")
-    await run_model_diagnostics()
+    await run_model_diagnostics(primary_key)
 
-    # Further checks
+    # Start background cleanup for KEY_MODELS_USAGE
+    asyncio.create_task(cleanup_stale_model_usage())
+    logger.info("KEY_MODELS_USAGE cleanup task started (runs hourly)")
 
     logger.info("Startup checks completed.")
 
@@ -580,6 +629,5 @@ async def test_hawki_endpoint() -> bool:
 if __name__ == "__main__":
     logger.info(f"Starting the wrapper on port {PORT}")
     logger.info(f"Completion cache size: {len(completion_cache.cache)}")
-    asyncio.run(run_startup_checks())
     uvicorn.run(app, host="0.0.0.0", port=int(PORT))
 

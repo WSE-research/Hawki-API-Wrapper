@@ -125,7 +125,7 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         self.health_check_patcher = patch('wrapper.health_check_model')
         self.mock_health_check = self.health_check_patcher.start()
 
-        async def default_health_check(model: str, use_cache: bool = False):
+        async def default_health_check(model: str, api_key: str, use_cache: bool = False):
             return create_mock_health_check_result(model, use_cache)
 
         self.mock_health_check.side_effect = default_health_check
@@ -164,24 +164,40 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         self.health_check_patcher.stop()
 
     def test_health_details_endpoint_accessible(self):
-        """Test that /health/details endpoint is accessible"""
+        """Test that /health/details endpoint is accessible and requires an API key for model data"""
         logger.info("Testing /health/details endpoint accessibility")
         
+        # Without auth: endpoint still returns 200 but model_check is an info message
         response = self.client.get("/health/details")
         
         self.assertEqual(response.status_code, 200)
         data = response.json()
         
-        # Basic sanity check
         self.assertEqual(data.get("status"), "healthy")
+        model_check = data.get("model_check")
+        self.assertIsInstance(model_check, str, "Without auth, model_check should be an info message")
+        self.assertIn("API key", model_check)
+        
+        # With a valid key: model_check should be a dict of model diagnostics
+        response_auth = self.client.get(
+            "/health/details",
+            headers={"Authorization": f"Bearer {self.valid_key}"}
+        )
+        self.assertEqual(response_auth.status_code, 200)
+        data_auth = response_auth.json()
+        self.assertEqual(data_auth.get("status"), "healthy")
+        self.assertIsInstance(data_auth.get("model_check"), dict)
         
         logger.info(f"✓ /health/details endpoint is accessible and healthy")
 
     def test_health_details_performs_model_diagnostics(self):
-        """Test that /health/details runs diagnostics on models"""
+        """Test that /health/details runs diagnostics on models when API key is provided"""
         logger.info("Testing /health/details model diagnostics")
         
-        response = self.client.get("/health/details")
+        response = self.client.get(
+            "/health/details",
+            headers={"Authorization": f"Bearer {self.valid_key}"}
+        )
         data = response.json()
         
         # Should have model_check with diagnostics
@@ -207,7 +223,10 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         """Test that the second diagnostic request uses cache"""
         logger.info("Testing /health/details cache behavior")
         
-        response = self.client.get("/health/details")
+        response = self.client.get(
+            "/health/details",
+            headers={"Authorization": f"Bearer {self.valid_key}"}
+        )
         data = response.json()
         
         model_check = data.get("model_check", {})
@@ -240,7 +259,7 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         # Configure mock to make some models available and some unavailable
         call_count = [0]
         
-        async def mock_check_with_failures(model: str, use_cache: bool = False):
+        async def mock_check_with_failures(model: str, api_key: str, use_cache: bool = False):
             call_count[0] += 1
             # Make every other model unavailable (first call is uncached, second is cached)
             status = "available" if (call_count[0] // 2) % 2 == 0 else "unavailable"
@@ -252,8 +271,11 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         models_before = set(hawkiClient.models.list())
         logger.info(f"  Available models before: {len(models_before)}")
         
-        # Run health/details
-        response = self.client.get("/health/details")
+        # Run health/details with valid API key
+        response = self.client.get(
+            "/health/details",
+            headers={"Authorization": f"Bearer {self.valid_key}"}
+        )
         self.assertEqual(response.status_code, 200)
         data = response.json()
         
@@ -274,19 +296,20 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         logger.info(f"✓ Available models correctly updated to {len(models_after)} models")
 
     def test_health_details_usage_tracking_without_auth(self):
-        """Test that /health/details doesn't include usage without authorization"""
+        """Test that /health/details returns an info message instead of model data without authorization"""
         logger.info("Testing /health/details without authorization")
         
         response = self.client.get("/health/details")
+        self.assertEqual(response.status_code, 200)
         data = response.json()
         
-        # Without auth, usage data should not be included
-        model_check = data.get("model_check", {})
-        for model_name, model_info in model_check.items():
-            self.assertNotIn("usage", model_info,
-                           f"Model '{model_name}' should not have usage data without auth")
+        # Without auth, model_check should be a string message, not model diagnostics
+        model_check = data.get("model_check")
+        self.assertIsInstance(model_check, str,
+                              "model_check should be an info message string when no API key is provided")
+        self.assertIn("API key", model_check)
         
-        logger.info(f"✓ No usage data included without authorization")
+        logger.info(f"✓ No model diagnostics returned without authorization, got message: {model_check}")
 
     def test_health_details_usage_tracking_with_auth(self):
         """Test that /health/details can include usage with valid authorization"""
@@ -335,13 +358,13 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         
-        # Should not have usage data with invalid key
-        model_check = data.get("model_check", {})
-        for model_name, model_info in model_check.items():
-            self.assertNotIn("usage", model_info,
-                           f"Model '{model_name}' should not have usage data with invalid auth")
+        # With an invalid key, model_check should be an error/info string, not model diagnostics
+        model_check = data.get("model_check")
+        self.assertIsInstance(model_check, str,
+                              "model_check should be an info/error message string for an invalid API key")
+        self.assertIn("API key", model_check)
         
-        logger.info(f"✓ Invalid authorization handled gracefully")
+        logger.info(f"✓ Invalid authorization handled gracefully, got message: {model_check}")
 
 
 class TestHealthEndpointsIntegration(unittest.TestCase):
@@ -355,11 +378,12 @@ class TestHealthEndpointsIntegration(unittest.TestCase):
         self.health_check_patcher = patch('wrapper.health_check_model')
         self.mock_health_check = self.health_check_patcher.start()
         
-        async def mock_check(model: str, use_cache: bool = False):
+        async def mock_check(model: str, api_key: str, use_cache: bool = False):
             return create_mock_health_check_result(model, use_cache)
         
         self.mock_health_check.side_effect = mock_check
         self.client = TestClient(app)
+        self.valid_key = ALLOWED_KEYS[0]
 
     def tearDown(self):
         """Clean up mocking after each test"""
@@ -374,9 +398,12 @@ class TestHealthEndpointsIntegration(unittest.TestCase):
         health_response = self.client.get("/health")
         health_time = time.time() - start
         
-        # Measure /health/details response time
+        # Measure /health/details response time (API key required to run diagnostics)
         start = time.time()
-        details_response = self.client.get("/health/details")
+        details_response = self.client.get(
+            "/health/details",
+            headers={"Authorization": f"Bearer {self.valid_key}"}
+        )
         details_time = time.time() - start
         
         # ASSERT: Both endpoints should return 200
