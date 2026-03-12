@@ -25,7 +25,8 @@ import time
 
 load_dotenv('./service_config/files/.env')
 
-ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default="").split(",")
+ALLOWED_KEYS: list[str] = config("ALLOWED_KEYS", default=None).split(",")
+PRIMARY_API_KEY = config("PRIMARY_API_KEY", default=None)
 PORT = config('PORT', default=8000)
 HAWKI_API_URL = config('HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
 HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
@@ -579,6 +580,16 @@ async def run_startup_checks():
     """
     logger.info("Running startup checks...")
 
+    # Check 0: Check if any API key is set
+    if not PRIMARY_API_KEY:
+        logger.error("PRIMARY_API_KEY is not set. Exiting.")
+        raise SystemExit("Fatal: PRIMARY_API_KEY is not configured")
+    
+    if not ALLOWED_KEYS or not ALLOWED_KEYS[0]:
+        logger.warning("ALLOWED_KEYS is not set or empty.")
+    
+    primary_key = ALLOWED_KEYS[0] if ALLOWED_KEYS and ALLOWED_KEYS[0] else PRIMARY_API_KEY
+    
     # Check 1: Test connection to Hawki API
     logger.info("Checking connection to Hawki API...")
     while not await test_hawki_endpoint():
@@ -587,7 +598,7 @@ async def run_startup_checks():
 
     # Check 2: Check usable models
     logger.info("Checking available models...")
-    await run_model_diagnostics(ALLOWED_KEYS[0])  # Use primary shared API key for diagnostics
+    await run_model_diagnostics(primary_key)
 
     # Start background cleanup for KEY_MODELS_USAGE
     asyncio.create_task(cleanup_stale_model_usage())
