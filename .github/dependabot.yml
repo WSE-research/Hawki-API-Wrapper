@@ -29,6 +29,12 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+    ignore:
+      # v0.1.5 of this org action regressed: its "Replace secrets in env file"
+      # step fails the docker job (the image build itself succeeds). Stay on
+      # v0.1.4 until it is fixed upstream.
+      - dependency-name: WSE-research/actions-replace-env-variables
+        versions: [">=0.1.5"]
 
   - package-ecosystem: docker
     directory: "/"
