@@ -8,7 +8,7 @@ langchain-community==0.3.25
 langchain-openai==0.3.23
 langgraph==0.4.1
 SPARQLWrapper==2.0.0
-openai==1.93.2
+openai==2.44.0
 uvicorn[standard]==0.49.0
 loguru==0.7.3
 numpy==2.4.6
