@@ -1,10 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager
-from collections import deque
 from fastapi import FastAPI, Request, Header
 import uvicorn
 from fastapi import responses as fastapi_responses
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 from decouple import config
 from exceptions import EmptyResponseError, ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
@@ -12,11 +11,9 @@ from logger_config import logger
 from cache import LRUCache
 from helpers import pretty_print_json
 from httpx import AsyncClient
-from fastapi import Request
 from fastapi.responses import StreamingResponse
 from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
-from datetime import datetime
 from model_usage import ModelUsage
 from cachetools import TTLCache, cached
 from pprint import pformat
@@ -258,7 +255,7 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
             add_model_usage(request_api_key, model)
             response_json = json.loads(response.model_dump_json())
             if not response_json or not response_json.get("content"):
-                logger.error(f"Invalid response, empty.")
+                logger.error("Invalid response, empty.")
                 return fastapi_responses.JSONResponse(
                     content={"error": "Invalid (empty) response from Hawki API. Retry or try another model."},
                     status_code=522

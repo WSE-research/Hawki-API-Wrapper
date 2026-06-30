@@ -17,3 +17,5 @@ pymongo==4.13.2
 sentence-transformers==5.0.0
 langchain-huggingface==0.3.0
 faiss-cpu==1.11.0
+cachetools==5.5.2
+tenacity==9.1.2
