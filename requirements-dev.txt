@@ -16,7 +16,7 @@ loguru==0.7.3
 pydantic==2.13.4
 requests==2.34.2
 pytest>=9.1.1,<10
-pytest-asyncio>=0.22,<1
+pytest-asyncio>=1.4.0,<2
 pytest-cov==7.1.0
 httpx>=0.28.1,<1
 ruff==0.15.20
