@@ -6,7 +6,7 @@ fastapi==0.115.13
 uvicorn[standard]==0.34.3
 python-decouple==3.8
 python-dotenv==1.1.0
-langchain-core==0.3.65
+langchain-core==1.4.8
 langchain-openai==0.3.23
 openai==1.93.2
 cachetools==5.5.2

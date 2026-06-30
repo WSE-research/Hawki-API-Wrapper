@@ -3,7 +3,7 @@ python-decouple==3.8
 streamlit>=1.42.0
 fastapi==0.115.13
 pydantic==2.11.7
-langchain-core==0.3.65
+langchain-core==1.4.8
 langchain-community==0.3.25
 langchain-openai==0.3.23
 langgraph==0.4.1
