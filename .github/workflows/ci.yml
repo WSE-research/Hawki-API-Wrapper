@@ -1,0 +1,115 @@
+# CI for Hawki-API-Wrapper.
+# Tests gate every PR and push; the Docker image is built/pushed/registered on
+# tag only AFTER the tests pass (the `docker` job `needs` test + e2e). Replaces
+# the old, ungated docker-image.yml.
+#
+# CI installs the lightweight requirements-dev.txt (the subset of runtime deps
+# the service actually imports, plus the test tooling); the full runtime image
+# still uses requirements.txt.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["*"]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install ruff
+      - run: ruff check wrapper.py HawkiLLM.py cache.py model_usage.py helpers.py exceptions.py logger_config.py tests/ test_wrapper.py test_health_endpoints.py test_model_usage.py
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Unit & functional tests with coverage gate
+        run: |
+          pytest -m "not e2e" \
+            --cov=wrapper --cov=HawkiLLM --cov=cache --cov=model_usage --cov=helpers --cov=exceptions \
+            --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=50 --junitxml=pytest-report.xml
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: End-to-end app boot test
+        run: pytest tests/e2e -m e2e -v
+
+  docker:
+    # Build/push the image only after tests pass.
+    needs: [test, e2e]
+    runs-on: ubuntu-latest
+    env:
+      PRIMARY_API_KEY: ${{ secrets.PRIMARY_API_KEY }}
+      ALLOWED_KEYS: ${{ secrets.ALLOWED_KEYS }}
+      INJECTED_PORT: ${{ secrets.INJECTED_PORT }}
+      HAWKI_API_URL: ${{ secrets.HAWKI_API_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Save tag to file if release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo ${{ github.ref_name }} > VERSION.txt && cat VERSION.txt
+      - name: Build the Docker image (PR/branch — no push)
+        if: ${{ ! startsWith(github.ref, 'refs/tags/') }}
+        run: docker build . --file Dockerfile --tag tmp:latest
+      - name: Build the Docker image for tag release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: docker build . --file Dockerfile --tag ${{ secrets.DOCKER_IMAGE_NAME }}:latest
+      - name: Docker Login
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Tag latest docker image
+        if: startsWith(github.ref, 'refs/tags/')
+        run: docker tag ${{ secrets.DOCKER_IMAGE_NAME }}:latest wseresearch/${{ secrets.DOCKER_IMAGE_NAME }}:latest
+      - name: Tag docker image version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: docker tag ${{ secrets.DOCKER_IMAGE_NAME }}:latest "wseresearch/${{ secrets.DOCKER_IMAGE_NAME }}:${{ github.ref_name }}"
+      - name: Push latest docker image
+        if: startsWith(github.ref, 'refs/tags/')
+        run: docker push wseresearch/${{ secrets.DOCKER_IMAGE_NAME }}:latest
+      - name: Push docker image version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: docker push "wseresearch/${{ secrets.DOCKER_IMAGE_NAME }}:${{ github.ref_name }}"
+      - name: Replace secrets in env file
+        uses: WSE-research/actions-replace-env-variables@v0.1.4
+      - name: Init update
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: WSE-research/docker-service-updater@v0.2.1
+        with:
+          updater_host: ${{ secrets.UPDATER_HOST }}
+          api_key: ${{ secrets.API_KEY }}

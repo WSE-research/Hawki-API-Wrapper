@@ -12,7 +12,7 @@ Note: /health/details tests use mocked API responses to avoid real API calls.
 """
 
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from fastapi.responses import JSONResponse
 import logging
@@ -81,7 +81,7 @@ class TestHealthEndpoint(unittest.TestCase):
         self.assertIsNotNone(data)
         self.assertEqual(data.get("status"), "healthy")        
         
-        logger.info(f"✓ /health endpoint is accessible and healthy")
+        logger.info("✓ /health endpoint is accessible and healthy")
 
     def test_health_endpoint_reports_cache_info(self):
         """Test that /health endpoint reports cache information"""
@@ -188,7 +188,7 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
         self.assertEqual(data_auth.get("status"), "healthy")
         self.assertIsInstance(data_auth.get("model_check"), dict)
         
-        logger.info(f"✓ /health/details endpoint is accessible and healthy")
+        logger.info("✓ /health/details endpoint is accessible and healthy")
 
     def test_health_details_performs_model_diagnostics(self):
         """Test that /health/details runs diagnostics on models when API key is provided"""
@@ -215,7 +215,7 @@ class TestHealthDetailsEndpoint(unittest.TestCase):
             for req in requests:
                 status = req.get("status")
                 self.assertIn(status, ["available", "unavailable"],
-                            f"Request status should be 'available' or 'unavailable'")
+                            "Request status should be 'available' or 'unavailable'")
         
         logger.info(f"✓ Diagnostics completed for {len(model_check)} models")
 

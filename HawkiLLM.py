@@ -48,7 +48,7 @@ class RateLimitedOpenAI(ChatOpenAI):
     )
     def _generate(self, *args, **kwargs):
         start_time = time.time()
-        logger.info(f"Starting RateLimitedOpenAI request (max retries: 5, max wait: 60s)")
+        logger.info("Starting RateLimitedOpenAI request (max retries: 5, max wait: 60s)")
         
         try:
             response = super()._generate(*args, **kwargs)
@@ -309,7 +309,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         logger.debug(f"Starting Hawki2 generation with {len(messages)} messages")
         text = self._call(messages, stop)
         generation = ChatGeneration(message=AIMessage(content=text))
-        logger.debug(f"Completed Hawki2 generation")
+        logger.debug("Completed Hawki2 generation")
         return ChatResult(generations=[generation])
 
     def setConfig(self, settings: dict):
