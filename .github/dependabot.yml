@@ -11,6 +11,16 @@ updates:
     groups:
       python-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # numpy 2.5 dropped Python 3.11; the runtime image is python:3.11-slim.
+      # Remove this once the service moves to Python 3.12+.
+      - dependency-name: numpy
+        versions: [">=2.5.0"]
+      # langchain-community 0.4 requires langchain-core >=1.4 — a coordinated
+      # langchain 1.x ecosystem upgrade (core/community/openai/huggingface) that
+      # must be done by hand, not as a grouped minor/patch bump.
+      - dependency-name: langchain-community
+        versions: [">=0.4.0"]
 
   - package-ecosystem: github-actions
     directory: "/"
