@@ -16,11 +16,14 @@ updates:
       # Remove this once the service moves to Python 3.12+.
       - dependency-name: numpy
         versions: [">=2.5.0"]
-      # langchain-community 0.4 requires langchain-core >=1.4 — a coordinated
-      # langchain 1.x ecosystem upgrade (core/community/openai/huggingface) that
-      # must be done by hand, not as a grouped minor/patch bump.
+      # langchain-community is version-locked to langchain-core, which is pinned
+      # at 0.3.65; even a 0.3.x patch of community pulls langchain-core >0.3.65.
+      # Hold the whole langchain ecosystem for a deliberate, coordinated 1.x
+      # upgrade (core/community/openai/huggingface) rather than grouped bumps.
       - dependency-name: langchain-community
-        versions: [">=0.4.0"]
+      - dependency-name: langchain-core
+      - dependency-name: langchain-openai
+      - dependency-name: langchain-huggingface
 
   - package-ecosystem: github-actions
     directory: "/"
