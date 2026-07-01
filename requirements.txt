@@ -1,6 +1,6 @@
 colorlog==6.10.1
 python-decouple==3.8
-streamlit>=1.42.0
+streamlit>=1.58.0
 fastapi==0.138.2
 pydantic==2.13.4
 langchain-core==1.4.8
