@@ -171,3 +171,6 @@ cython_debug/
 
 # Service config
 service_config/files/env
+# Runtime request logs (keep the directory via .gitkeep)
+logs/*.txt
+pytest-report.xml

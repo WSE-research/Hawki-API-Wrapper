@@ -51,7 +51,7 @@ In the `.env-file`, there are several vars that need to be configured.
 
 ```.env
 ALLOWED_KEYS=ALLOWED_KEYS # These are the proxy keys to use for auth to the API, choose yourself
-PRIMARY_API_KEY=PRIMARY_API_KEY # That's your Hawki Web UI key
+PRIMARY_API_KEY=PRIMARY_API_KEY # Your Hawki Web UI key — REQUIRED, the application will not start without it
 PORT=8080 # adjust as you like, not necessary
 HAWKI_API_URL=HAWKI_API_URL # the Hawki Web UI endpoint, defaults to https://hawki2.htwk-leipzig.de/api/ai-req
 ```
@@ -194,7 +194,12 @@ A detailed diagnostic endpoint that actively probes each configured model by sen
 Each model is probed twice – once without caching and once with caching – to verify both live availability and cache behaviour.
 The endpoint also updates the internal list of available models based on the probe results.
 
-Optionally, pass an `Authorization: Bearer <api-key>` header to include per-model usage statistics for the given key.
+[IMPORTANT]
+====
+A valid `Authorization: Bearer <api-key>` header is **required**. Without it (or if the key cannot be verified), no model diagnostics are run and `model_check` will not contain usage details.
+====
+
+Per-model usage statistics for the past 24 hours are included in the response when the key has recorded usage.
 
 Returns a JSON object with:
 
@@ -248,7 +253,7 @@ Example response:
 ```
 
 === Trouble-shooting (Cooldowns)
-If you face long waiting times for responses, that may be due to the settings of `global_timeout` in ln 141 in HawkiLLM.py. Change that according to your needs. The same applies for cases when responses may take longer due to large prompts. Experiment with it.
+If you face long waiting times for responses, that may be due to the `GLOBAL_TIMEOUT` setting in `service_config/files/.env` (default: 60 seconds). Increase it as needed — the same applies when responses may take longer due to large prompts. You can also override the timeout per-request using the `X-Hawki-Request-Timeout` header, as described above.
 
 == Contribute
 

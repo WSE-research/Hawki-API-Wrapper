@@ -1,0 +1,45 @@
+# Grouped, weekly dependency updates. Grouping minor+patch into one PR per
+# ecosystem fixes the previous pile-up of individual daily PRs; majors still
+# arrive separately (those need a human + the CI gate before merging).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # numpy 2.5 dropped Python 3.11; the runtime image is python:3.11-slim.
+      # Remove this once the service moves to Python 3.12+.
+      - dependency-name: numpy
+        versions: [">=2.5.0"]
+      # langchain-community is version-locked to langchain-core, which is pinned
+      # at 0.3.65; even a 0.3.x patch of community pulls langchain-core >0.3.65.
+      # Hold the whole langchain ecosystem for a deliberate, coordinated 1.x
+      # upgrade (core/community/openai/huggingface) rather than grouped bumps.
+      - dependency-name: langchain-community
+      - dependency-name: langchain-core
+      - dependency-name: langchain-openai
+      - dependency-name: langchain-huggingface
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    ignore:
+      # v0.1.5 of this org action regressed: its "Replace secrets in env file"
+      # step fails the docker job (the image build itself succeeds). Stay on
+      # v0.1.4 until it is fixed upstream.
+      - dependency-name: WSE-research/actions-replace-env-variables
+        versions: [">=0.1.5"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly

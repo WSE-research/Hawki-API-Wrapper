@@ -19,7 +19,7 @@ from tenacity import (
 )
 from requests.exceptions import HTTPError, Timeout
 
-from exceptions import ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
+from exceptions import EmptyResponseError, ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
 
 OPENROUTER_MAX_COOLDOWN = 3600  # 1 hour
 
@@ -48,7 +48,7 @@ class RateLimitedOpenAI(ChatOpenAI):
     )
     def _generate(self, *args, **kwargs):
         start_time = time.time()
-        logger.info(f"Starting RateLimitedOpenAI request (max retries: 5, max wait: 60s)")
+        logger.info("Starting RateLimitedOpenAI request (max retries: 5, max wait: 60s)")
         
         try:
             response = super()._generate(*args, **kwargs)
@@ -108,6 +108,7 @@ class Models:
     def __init__(self):
         # Load from JSON
         self.models = initial_models
+        self.refreshed_at = 0
 
     def list(self) -> List[str]:
         """
@@ -273,10 +274,11 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                         logger.debug(f"Extracted response: {self._truncate_text(text)}")
                         return text
                     else:
-                        logger.warning(f"Empty 'text' in response. Data: {self._truncate_text(str(data), 1000)}")
-                        logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
-                        self._set_cooldown(time.time())
-                        continue
+                        #logger.warning(f"Empty 'text' in response. Data: {self._truncate_text(str(data), 1000)}")
+                        #logger.warning(f"Retrying (attempt {attempt + 1}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
+                        #self._set_cooldown(time.time())
+                        #continue
+                        raise EmptyResponseError("Upstream API returned an empty response", status_code=522)
 
                 response.raise_for_status()
 
@@ -292,6 +294,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
                     backoff = self._set_cooldown(time.time())
                     logger.warning(f"Rate limit hit (429). Backing off for {backoff:.1f}s (failure #{self.failures}), remaining timeout: {self.global_timeout - (time.time() - start_time):.1f}s")
                     logger.warning(f"Retrying (attempt {attempt + 1}) after cooldown...")
+                    ratelimit = True
                     continue
                 elif status_code == 401:
                     logger.error(f"Unauthorized (401): {e}")
@@ -306,7 +309,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         logger.debug(f"Starting Hawki2 generation with {len(messages)} messages")
         text = self._call(messages, stop)
         generation = ChatGeneration(message=AIMessage(content=text))
-        logger.debug(f"Completed Hawki2 generation")
+        logger.debug("Completed Hawki2 generation")
         return ChatResult(generations=[generation])
 
     def setConfig(self, settings: dict):
@@ -326,4 +329,7 @@ class Hawki2ChatModel(BaseChatModel, BaseModel):
         timeout = settings.get("timeout")
         self.global_timeout = timeout if timeout is not None else self.global_timeout
         if "api_key" in settings:
-            self.api_key = settings.get("api_key")
+            self.setApiKey(settings["api_key"])
+    
+    def setApiKey(self, api_key: str):
+        self.api_key = api_key

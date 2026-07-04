@@ -1,22 +1,20 @@
 import asyncio
 from contextlib import asynccontextmanager
-from collections import deque
 from fastapi import FastAPI, Request, Header
 import uvicorn
 from fastapi import responses as fastapi_responses
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 from decouple import config
-from exceptions import ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
+from exceptions import EmptyResponseError, ModelNotFoundException, GlobalTimeoutError, CooldownTimeoutError, UnauthorizedError, RequestFailedError
 from logger_config import logger
 from cache import LRUCache
 from helpers import pretty_print_json
 from httpx import AsyncClient
-from fastapi import Request
 from fastapi.responses import StreamingResponse
 from HawkiLLM import Hawki2ChatModel
 from dotenv import load_dotenv
-from datetime import datetime
+from model_usage import ModelUsage
 from cachetools import TTLCache, cached
 from pprint import pformat
 from langchain_core.messages import BaseMessage
@@ -31,9 +29,13 @@ PORT = config('PORT', default=8000)
 HAWKI_API_URL = config('HAWKI_API_URL', default='https://hawki2.htwk-leipzig.de/api/ai-req')
 HEALTH_CHECK_PROMPT = "Health check test. Response with 'OK' if you are operational."
 SKIP_STARTUP_CHECKS = config("SKIP_STARTUP_CHECKS", default="false").lower() == "true"
+DEFAULT_OWNER = "Hawki HTWK Leipzig"
 try:
     STARTUP_MAX_RETRIES = int(config("STARTUP_MAX_RETRIES", default=0))  # 0 = unlimited
 except ValueError:
+    raise ValueError("STARTUP_MAX_RETRIES must be a non-negative integer (0 = unlimited retries)")
+
+if STARTUP_MAX_RETRIES < 0:
     raise ValueError("STARTUP_MAX_RETRIES must be a non-negative integer (0 = unlimited retries)")
 
 logger.debug(f"ALLOWED_KEYS: {ALLOWED_KEYS}")
@@ -64,60 +66,49 @@ client_cache = TTLCache(maxsize=CLIENT_CACHE_MAXSIZE, ttl=CLIENT_CACHE_TTL)
 
 KEY_MODELS_USAGE: dict[str, dict[str, ModelUsage]] = {}
 
-class ModelUsage:
-    # Holds timestamps for one model, and provides method to get usage per hour for the last 24 hours
-    # Care for testing: add() simply appends the timestamp to the right of the deque as no sorting is needed for this use case. Thus, the oldest timestamp is always on the left and the newest on the right.
-
-    def __init__(self, model_name: str):
-        self.model_name = model_name
-        self._timestamps = deque()
-
-    def add(self, dt: datetime | None = None):
-        if dt is None:
-            dt = datetime.now()
-        self._timestamps.append(dt)
-        self._cleanup()
-    
-    def getTimestamps(self):
-        self._cleanup()
-        return list(self._timestamps)
-
-    def getModelName(self):
-        return self.model_name
-
-    def is_empty(self) -> bool:
-        """Return True if there are no timestamps within the last 24 hours."""
-        self._cleanup()
-        return len(self._timestamps) == 0
-
-    def _cleanup(self):
-        cutoff = datetime.now() - timedelta(hours=24)
-        while self._timestamps and self._timestamps[0] < cutoff:
-            self._timestamps.popleft()
-
-    def getUsagePerHour(self): # Return cumulative counts for usage of the past 24 hours in a list of length 24, where index 0 is the count for the last hour, index 1 for the last 2 hours, and so on
-        self._cleanup()
-        now = datetime.now()
-
-        result = []
-        total = len(self._timestamps)
-        idx = total - 1  # start from newest
-
-        # For hour = 1 to 24
-        for hours in range(1, 25):
-            cutoff = now - timedelta(hours=hours)
-
-            # Move index left while timestamps are >= cutoff
-            while idx >= 0 and self._timestamps[idx] >= cutoff:
-                idx -= 1
-
-            # total elements minus elements before cutoff
-            result.append(total - (idx + 1))
-            logger.debug(f"Model {self.model_name} - Usage in last {hours} hour(s): {result[hours -1]}")
-
-        return result
-
 HTTP_SERVER = AsyncClient()
+
+def _format_model_entry(model: str | dict) -> dict:
+    refreshed_at = hawkiClient.models.refreshed_at
+
+    if isinstance(model, dict):
+        return {
+            "id": model.get("id") or model.get("name") or "unknown",
+            "object": model.get("object", "model"),
+            "created": int(model.get("created", refreshed_at) or refreshed_at),
+            "owned_by": model.get("owned_by", DEFAULT_OWNER)
+        }
+
+    return {
+        "id": model,
+        "object": "model",
+        "created": refreshed_at,
+        "owned_by": DEFAULT_OWNER
+    }
+
+
+def format_models_response(model_list: list[str] | dict) -> dict:
+    if isinstance(model_list, dict):
+        if model_list.get("object") == "list" and isinstance(model_list.get("data"), list):
+            return {
+                "object": "list",
+                "data": [_format_model_entry(model) for model in model_list["data"]]
+            }
+
+        if isinstance(model_list.get("models"), list):
+            models = model_list["models"]
+        elif isinstance(model_list.get("data"), list):
+            models = model_list["data"]
+        else:
+            models = []
+    else:
+        models = model_list
+
+    return {
+        "object": "list",
+        "data": [_format_model_entry(model) for model in models]
+    }
+
 
 def add_model_usage(api_key: str, model_name: str):
     if api_key not in KEY_MODELS_USAGE:
@@ -257,6 +248,12 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
                 content={"error": "Upstream request failed", "detail": str(e)},
                 status_code=e.status_code or 502
             )
+        except EmptyResponseError as e:
+            logger.error(f"Empty response: {e}")
+            return fastapi_responses.JSONResponse(
+                content="Invalid (empty) response from Hawki API. Retry or try another model.",
+                status_code=e.status_code or 522
+            )
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             return fastapi_responses.JSONResponse(
@@ -272,7 +269,7 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
             add_model_usage(request_api_key, model)
             response_json = json.loads(response.model_dump_json())
             if not response_json or not response_json.get("content"):
-                logger.error(f"Invalid response, empty.")
+                logger.error("Invalid response, empty.")
                 return fastapi_responses.JSONResponse(
                     content={"error": "Invalid (empty) response from Hawki API. Retry or try another model."},
                     status_code=522
@@ -289,7 +286,7 @@ async def process_chat_request(body: dict, header: dict | None, request_obj: Req
             logger.error(f"Error parsing response: {e}")
             logger.error(f"Response: {pformat(response.model_dump(), indent=4)}")
             return fastapi_responses.JSONResponse(
-                content={"error": "Internal Server Error"},
+                content=f"Error parsing response from Hawki API. Error {e}",
                 status_code=500
             )
 
@@ -341,6 +338,7 @@ async def run_model_diagnostics(api_key:str) -> dict:
         else:
             logger.error(f"Model {model_name} is {status}")
 
+    hawkiClient.models.refreshed_at = int(time.time())
     hawkiClient.models.set(list(available_models))
 
     return modelCheckJson
@@ -481,7 +479,7 @@ async def list_models(request: Request):
 
     try:
         # Forward the request to OpenAI API using the client
-        model_list = hawkiClient.models.list()
+        model_list = format_models_response(hawkiClient.models.list())
 
         # models: pretty print the JSON response
         logger.info(
@@ -542,9 +540,7 @@ def setClient(api_key: str) -> Hawki2ChatModel:
         return client
     # Check if user provided API key (for Hawki Web UI) is valid
     elif api_key and is_api_key_working(api_key): # TODO: Restrict further, especially secondary key usage 
-        client.setConfig({
-            "api_key": api_key
-        })
+        client.setApiKey(api_key)
         return client
     else:  # Not a valid API key
         raise ValueError("Invalid API Key")
