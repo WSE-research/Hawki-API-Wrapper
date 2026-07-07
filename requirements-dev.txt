@@ -2,8 +2,8 @@
 # that the service code actually imports, plus the test tooling. The full
 # runtime/Docker dependency set (incl. the unused ML extras) lives in
 # requirements.txt.
-fastapi==0.138.2
-uvicorn[standard]==0.49.0
+fastapi==0.139.0
+uvicorn[standard]==0.50.2
 python-decouple==3.8
 python-dotenv==1.2.2
 langchain-core==1.4.8
