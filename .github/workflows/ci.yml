@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install ruff
+      - run: pip install ruff==0.15.22
       - run: ruff check wrapper.py HawkiLLM.py cache.py model_usage.py helpers.py exceptions.py logger_config.py tests/ test_wrapper.py test_health_endpoints.py test_model_usage.py
 
   test:
