@@ -17,10 +17,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v4.37.9
+      - uses: github/codeql-action/init@v4.38.2
         with:
           languages: python
           build-mode: none
-      - uses: github/codeql-action/analyze@v4.37.9
+      - uses: github/codeql-action/analyze@v4.38.2
         with:
           category: "/language:python"
