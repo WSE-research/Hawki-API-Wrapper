@@ -14,7 +14,7 @@ loguru==0.7.3
 numpy==2.4.6
 python-dotenv==1.2.4
 pymongo==4.19.0
-sentence-transformers==5.6.0
+sentence-transformers==6.2.0
 langchain-huggingface==1.2.2
 faiss-cpu==1.15.1
 cachetools==7.2.2
